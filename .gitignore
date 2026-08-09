@@ -1,0 +1,11 @@
+# Build artifacts
+/mihon-sync
+*.exe
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+
+# Logs
+*.log
