@@ -1,0 +1,16 @@
+services:
+  mihon-sync:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - mihon-sync-data:/data
+    environment:
+      # Bootstrap API key, created on first start. Prefer managing keys with
+      # `docker compose exec mihon-sync /mihon-sync genkey` instead.
+      # MIHON_SYNC_API_KEY: "mhk_change_me"
+      MIHON_SYNC_RETENTION_DAYS: "30"
+
+volumes:
+  mihon-sync-data:
