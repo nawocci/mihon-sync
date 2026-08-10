@@ -31,17 +31,23 @@ Single static Go binary + embedded SQLite. No other services required.
 
 ## Run with Docker
 
+Pre-built images (amd64/arm64) are published to
+[ghcr.io/nawocci/mihon-sync](https://github.com/nawocci/mihon-sync/pkgs/container/mihon-sync).
+
 ```sh
-docker compose up -d --build
+curl -O https://raw.githubusercontent.com/nawocci/mihon-sync/main/docker-compose.yml
+docker compose up -d
 docker compose exec mihon-sync /mihon-sync genkey -label "my devices"
 ```
 
 Or without compose:
 
 ```sh
-docker build -t mihon-sync .
-docker run -d -p 8080:8080 -v mihon-sync-data:/data mihon-sync
+docker run -d -p 8080:8080 -v mihon-sync-data:/data ghcr.io/nawocci/mihon-sync:latest
 ```
+
+To build the image locally instead, use `docker compose up -d --build`
+(or `docker build -t mihon-sync .`).
 
 ## Run from source
 

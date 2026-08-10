@@ -1,5 +1,6 @@
 services:
   mihon-sync:
+    image: ghcr.io/nawocci/mihon-sync:latest
     build: .
     restart: unless-stopped
     ports:
