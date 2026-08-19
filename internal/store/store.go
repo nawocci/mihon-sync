@@ -22,9 +22,9 @@ func Open(path string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
-	// Single writer: one connection avoids SQLITE_BUSY under concurrent
-	// requests and is plenty for a sync workload.
-	db.SetMaxOpenConns(1)
+	// Support concurrent readers with WAL mode while busy_timeout handles concurrent writes.
+	db.SetMaxOpenConns(8)
+	db.SetMaxIdleConns(4)
 
 	s := &Store{db: db}
 	if err := s.migrate(); err != nil {
@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS mangas (
     PRIMARY KEY (account_id, source_id, url)
 );
 CREATE INDEX IF NOT EXISTS idx_mangas_rev ON mangas(account_id, rev);
+CREATE INDEX IF NOT EXISTS idx_mangas_active ON mangas(account_id) WHERE deleted = 0;
 
 CREATE TABLE IF NOT EXISTS chapters (
     account_id      INTEGER NOT NULL,
@@ -90,6 +91,7 @@ CREATE TABLE IF NOT EXISTS categories (
     PRIMARY KEY (account_id, name)
 );
 CREATE INDEX IF NOT EXISTS idx_categories_rev ON categories(account_id, rev);
+CREATE INDEX IF NOT EXISTS idx_categories_active ON categories(account_id) WHERE deleted = 0;
 
 CREATE TABLE IF NOT EXISTS manga_categories (
     account_id      INTEGER NOT NULL,
@@ -102,6 +104,7 @@ CREATE TABLE IF NOT EXISTS manga_categories (
     PRIMARY KEY (account_id, manga_source_id, manga_url, category)
 );
 CREATE INDEX IF NOT EXISTS idx_manga_categories_rev ON manga_categories(account_id, rev);
+CREATE INDEX IF NOT EXISTS idx_manga_categories_active ON manga_categories(account_id) WHERE deleted = 0;
 
 CREATE TABLE IF NOT EXISTS history (
     account_id      INTEGER NOT NULL,
@@ -127,6 +130,7 @@ CREATE TABLE IF NOT EXISTS preferences (
     PRIMARY KEY (account_id, key)
 );
 CREATE INDEX IF NOT EXISTS idx_preferences_rev ON preferences(account_id, rev);
+CREATE INDEX IF NOT EXISTS idx_preferences_active ON preferences(account_id) WHERE deleted = 0;
 `
 
 func (s *Store) migrate() error {
