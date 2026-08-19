@@ -1,23 +1,23 @@
-/* mihon-sync CSS styles - Kioku & Mihon Design System */
+/* mihon-sync CSS styles - Kioku Sakura & Obsidian Design System */
 
 :root {
-  /* Light Theme Colors (Mihon Cyan / Sky Blue & Crisp Slate) */
-  --primary: #0284c7;
-  --primary-hover: #0369a1;
+  /* Light Theme Colors (Electric Sakura / Rose & Crisp Neutral) */
+  --primary: #e11d48;
+  --primary-hover: #be123c;
   --primary-foreground: #ffffff;
-  --primary-glow: rgba(2, 132, 199, 0.16);
+  --primary-glow: rgba(225, 29, 72, 0.15);
 
-  --background: #f8fafc;
+  --background: #fafafc;
   --surface: #ffffff;
-  --surface-elevated: #f1f5f9;
+  --surface-elevated: #f4f4f8;
   
-  --foreground: #0f172a;
-  --foreground-secondary: #475569;
-  --foreground-muted: #64748b;
+  --foreground: #0f0d13;
+  --foreground-secondary: #47434f;
+  --foreground-muted: #6f6a78;
 
-  --border: #e2e8f0;
-  --border-subtle: #f1f5f9;
-  --ring: #0284c7;
+  --border: #e4e2eb;
+  --border-subtle: #f0eef5;
+  --ring: #e11d48;
 
   --success: #10b981;
   --success-bg: rgba(16, 185, 129, 0.1);
@@ -39,27 +39,27 @@
   --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
   --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
   --shadow-elevated: 0 1px 3px 0 rgba(0, 0, 0, 0.04), 0 4px 12px 0 rgba(0, 0, 0, 0.03);
-  --shadow-card-hover: 0 12px 24px -8px rgba(2, 132, 199, 0.12), 0 4px 8px -2px rgba(0, 0, 0, 0.04);
+  --shadow-card-hover: 0 12px 24px -8px rgba(225, 29, 72, 0.12), 0 4px 8px -2px rgba(0, 0, 0, 0.04);
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]):not([data-theme="dark"]) {
-    --primary: #38bdf8;
-    --primary-hover: #0ea5e9;
-    --primary-foreground: #0b0f19;
-    --primary-glow: rgba(56, 189, 248, 0.2);
+    --primary: #fb7185;
+    --primary-hover: #f43f5e;
+    --primary-foreground: #161114;
+    --primary-glow: rgba(251, 113, 133, 0.2);
 
-    --background: #0b0f19;
-    --surface: #111827;
-    --surface-elevated: #1e293b;
+    --background: #0e0c12;
+    --surface: #16131d;
+    --surface-elevated: #201c2b;
 
-    --foreground: #f8fafc;
-    --foreground-secondary: #94a3b8;
-    --foreground-muted: #64748b;
+    --foreground: #faf8fc;
+    --foreground-secondary: #a29cb0;
+    --foreground-muted: #716a80;
 
-    --border: #1e293b;
-    --border-subtle: #172033;
-    --ring: #38bdf8;
+    --border: #262133;
+    --border-subtle: #1d1827;
+    --ring: #fb7185;
 
     --success: #34d399;
     --success-bg: rgba(52, 211, 153, 0.12);
@@ -72,28 +72,28 @@
 
     --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.3);
     --shadow-elevated: 0 2px 6px 0 rgba(0, 0, 0, 0.3), 0 8px 20px -4px rgba(0, 0, 0, 0.4);
-    --shadow-card-hover: 0 12px 24px -8px rgba(56, 189, 248, 0.15), 0 4px 10px -2px rgba(0, 0, 0, 0.4);
+    --shadow-card-hover: 0 12px 24px -8px rgba(251, 113, 133, 0.16), 0 4px 10px -2px rgba(0, 0, 0, 0.4);
   }
 }
 
 html[data-theme="dark"],
 [data-theme="dark"] {
-  --primary: #38bdf8;
-  --primary-hover: #0ea5e9;
-  --primary-foreground: #0b0f19;
-  --primary-glow: rgba(56, 189, 248, 0.2);
+  --primary: #fb7185;
+  --primary-hover: #f43f5e;
+  --primary-foreground: #161114;
+  --primary-glow: rgba(251, 113, 133, 0.2);
 
-  --background: #0b0f19;
-  --surface: #111827;
-  --surface-elevated: #1e293b;
+  --background: #0e0c12;
+  --surface: #16131d;
+  --surface-elevated: #201c2b;
 
-  --foreground: #f8fafc;
-  --foreground-secondary: #94a3b8;
-  --foreground-muted: #64748b;
+  --foreground: #faf8fc;
+  --foreground-secondary: #a29cb0;
+  --foreground-muted: #716a80;
 
-  --border: #1e293b;
-  --border-subtle: #172033;
-  --ring: #38bdf8;
+  --border: #262133;
+  --border-subtle: #1d1827;
+  --ring: #fb7185;
 
   --success: #34d399;
   --success-bg: rgba(52, 211, 153, 0.12);
@@ -106,35 +106,26 @@ html[data-theme="dark"],
 
   --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.3);
   --shadow-elevated: 0 2px 6px 0 rgba(0, 0, 0, 0.3), 0 8px 20px -4px rgba(0, 0, 0, 0.4);
-  --shadow-card-hover: 0 12px 24px -8px rgba(56, 189, 248, 0.15), 0 4px 10px -2px rgba(0, 0, 0, 0.4);
+  --shadow-card-hover: 0 12px 24px -8px rgba(251, 113, 133, 0.16), 0 4px 10px -2px rgba(0, 0, 0, 0.4);
 }
 
 html[data-theme="light"] {
-  --primary: #0284c7;
-  --primary-hover: #0369a1;
+  --primary: #e11d48;
+  --primary-hover: #be123c;
   --primary-foreground: #ffffff;
-  --primary-glow: rgba(2, 132, 199, 0.16);
+  --primary-glow: rgba(225, 29, 72, 0.15);
 
-  --background: #f8fafc;
+  --background: #fafafc;
   --surface: #ffffff;
-  --surface-elevated: #f1f5f9;
+  --surface-elevated: #f4f4f8;
 
-  --foreground: #0f172a;
-  --foreground-secondary: #475569;
-  --foreground-muted: #64748b;
+  --foreground: #0f0d13;
+  --foreground-secondary: #47434f;
+  --foreground-muted: #6f6a78;
 
-  --border: #e2e8f0;
-  --border-subtle: #f1f5f9;
-  --ring: #0284c7;
-
-  --success: #10b981;
-  --success-bg: rgba(16, 185, 129, 0.1);
-  --warning: #f59e0b;
-  --warning-bg: rgba(245, 158, 11, 0.1);
-  --destructive: #ef4444;
-  --destructive-hover: #dc2626;
-  --destructive-foreground: #ffffff;
-  --destructive-bg: rgba(239, 68, 68, 0.08);
+  --border: #e4e2eb;
+  --border-subtle: #f0eef5;
+  --ring: #e11d48;
 }
 
 * {
@@ -805,18 +796,18 @@ input[type="password"]:focus {
 }
 
 /* Distinct Semantic Stat Accents */
-.icon-manga { background-color: rgba(2, 132, 199, 0.1); color: #0284c7; }
+.icon-manga { background-color: rgba(225, 29, 72, 0.1); color: #e11d48; }
 .icon-chapters { background-color: rgba(139, 92, 246, 0.1); color: #8b5cf6; }
 .icon-categories { background-color: rgba(245, 158, 11, 0.1); color: #f59e0b; }
 .icon-history { background-color: rgba(16, 185, 129, 0.1); color: #10b981; }
-.icon-preferences { background-color: rgba(236, 72, 153, 0.1); color: #ec4899; }
+.icon-preferences { background-color: rgba(14, 165, 233, 0.1); color: #0ea5e9; }
 .icon-devices { background-color: rgba(99, 102, 241, 0.1); color: #6366f1; }
 
-[data-theme="dark"] .icon-manga { color: #38bdf8; background-color: rgba(56, 189, 248, 0.12); }
+[data-theme="dark"] .icon-manga { color: #fb7185; background-color: rgba(251, 113, 133, 0.12); }
 [data-theme="dark"] .icon-chapters { color: #a78bfa; background-color: rgba(167, 139, 250, 0.12); }
 [data-theme="dark"] .icon-categories { color: #fbbf24; background-color: rgba(251, 191, 36, 0.12); }
 [data-theme="dark"] .icon-history { color: #34d399; background-color: rgba(52, 211, 153, 0.12); }
-[data-theme="dark"] .icon-preferences { color: #f472b6; background-color: rgba(244, 114, 182, 0.12); }
+[data-theme="dark"] .icon-preferences { color: #38bdf8; background-color: rgba(56, 189, 248, 0.12); }
 [data-theme="dark"] .icon-devices { color: #818cf8; background-color: rgba(129, 140, 248, 0.12); }
 
 .stat-content {
