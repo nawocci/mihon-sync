@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>mihon-sync &bull; Sync Dashboard</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <div id="app" class="app-container">
+    <!-- Navigation Bar -->
+    <header class="navbar">
+      <div class="nav-brand">
+        <img src="/logo.svg" alt="mihon-sync logo" class="brand-logo">
+        <span class="brand-title">mihon-sync</span>
+      </div>
+      <div class="nav-actions">
+        <div class="server-status-pill" id="serverStatusPill" title="Server Status">
+          <span class="status-dot"></span>
+          <span class="status-label" id="serverStatusLabel">Checking...</span>
+        </div>
+        <button id="themeToggleBtn" class="theme-toggle-btn" title="Toggle Theme" aria-label="Toggle Theme">
+          <svg class="theme-icon-sun theme-icon-rotate" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="5"></circle>
+            <line x1="12" y1="1" x2="12" y2="3"></line>
+            <line x1="12" y1="21" x2="12" y2="23"></line>
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+            <line x1="1" y1="12" x2="3" y2="12"></line>
+            <line x1="21" y1="12" x2="23" y2="12"></line>
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+          </svg>
+          <svg class="theme-icon-moon theme-icon-rotate" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+          </svg>
+          <span class="theme-toggle-label" id="themeToggleText">theme</span>
+        </button>
+        <button id="navLogoutBtn" class="btn btn-secondary btn-sm hidden">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+          <span>Sign Out</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <!-- Loading View -->
+      <section id="viewLoading" class="view-panel center-panel">
+        <div class="spinner-large"></div>
+        <p class="text-muted mt-4 font-mono text-sm">Connecting to sync server...</p>
+      </section>
+
+      <!-- Auth View (Logged Out) -->
+      <section id="viewAuth" class="view-panel center-panel hidden">
+        <div class="auth-card motion-scale-in">
+          <div class="auth-header">
+            <img src="/logo.svg" alt="mihon-sync logo" class="auth-logo">
+            <h2>Welcome to mihon-sync</h2>
+            <p class="text-secondary">Self-hosted sync dashboard for Kioku</p>
+          </div>
+
+          <!-- Auth Tab Switcher -->
+          <div class="tab-switcher" id="authTabSwitcher">
+            <button class="tab-btn active" id="tabLoginBtn" data-tab="login">Log In</button>
+            <button class="tab-btn" id="tabRegisterBtn" data-tab="register">Generate Key</button>
+          </div>
+
+          <!-- Login Form -->
+          <form id="loginForm" class="auth-form">
+            <div class="form-group">
+              <label for="loginApiKey">API Key</label>
+              <div class="input-wrapper">
+                <input type="password" id="loginApiKey" placeholder="mhk_..." required autocomplete="off" spellcheck="false" class="font-mono">
+                <button type="button" class="action-btn toggle-password-btn" data-target="loginApiKey" title="Show/Hide Key">
+                  <svg class="eye-open" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                  <svg class="eye-closed hidden" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>
+                </button>
+              </div>
+              <span class="input-hint">Enter your existing sync API key to view library statistics.</span>
+            </div>
+
+            <div id="loginError" class="alert-banner alert-error hidden"></div>
+
+            <button type="submit" class="btn btn-primary btn-block" id="loginSubmitBtn">
+              <span class="btn-text">Log In to Dashboard</span>
+              <span class="btn-spinner hidden"></span>
+            </button>
+          </form>
+
+          <!-- Register Form -->
+          <form id="registerForm" class="auth-form hidden">
+            <div class="form-group">
+              <label for="regLabel">Device / Account Label (Optional)</label>
+              <input type="text" id="regLabel" placeholder="e.g. My Phone &amp; Tablet" maxlength="64">
+              <span class="input-hint">A friendly label to identify this account key.</span>
+            </div>
+
+            <div id="registerError" class="alert-banner alert-error hidden"></div>
+
+            <div id="regDisabledNotice" class="alert-banner alert-info hidden">
+              Public account registration is disabled on this server. Please use an existing API key or contact the server administrator.
+            </div>
+
+            <button type="submit" class="btn btn-primary btn-block" id="registerSubmitBtn">
+              <span class="btn-text">Generate New API Key</span>
+              <span class="btn-spinner hidden"></span>
+            </button>
+          </form>
+
+          <!-- Key Created Modal / View -->
+          <div id="keyCreatedCard" class="key-created-card hidden">
+            <div class="success-icon-badge">
+              <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+            </div>
+            <h3>API Key Generated!</h3>
+            <p class="text-secondary text-sm">Save this key now. It is shown only once and cannot be retrieved again.</p>
+
+            <div class="key-display-box">
+              <code id="newGeneratedKeyDisplay" class="font-mono">mhk_...</code>
+              <button type="button" class="btn btn-secondary btn-sm copy-btn" id="copyNewKeyBtn" title="Copy to clipboard">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                <span>Copy</span>
+              </button>
+            </div>
+
+            <div class="alert-banner alert-warning">
+              Make sure to copy and store this API key in a secure location before continuing.
+            </div>
+
+            <button type="button" class="btn btn-primary btn-block" id="continueWithNewKeyBtn">
+              Continue to Dashboard
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Dashboard View (Logged In) -->
+      <section id="viewDashboard" class="view-panel dashboard-panel hidden">
+        <!-- Account Status Header -->
+        <div class="dashboard-header-card motion-fade-up">
+          <div class="header-main-info">
+            <div class="account-badge">
+              <span class="badge-dot"></span>
+              <span>Account Active</span>
+            </div>
+            <div class="account-key-meta">
+              <span class="meta-label font-mono">KEY:</span>
+              <code class="meta-code font-mono" id="dashMaskedKey">mhk_••••••••</code>
+              <button class="icon-btn-inline" id="dashCopyKeyBtn" title="Copy API Key">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+              </button>
+            </div>
+            <div class="account-date-meta font-mono" id="dashAccountDate">
+              Created: &mdash;
+            </div>
+          </div>
+          <div class="header-side-actions">
+            <div class="rev-badge">
+              <span class="rev-value font-mono tabular-nums" id="dashRevValue">0</span>
+              <span class="rev-label font-mono">REVISION</span>
+            </div>
+            <button class="btn btn-secondary btn-sm" id="dashRefreshBtn" title="Refresh Statistics">
+              <svg id="refreshIcon" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+              <span>Refresh</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Metric Cards Grid -->
+        <div class="stats-grid">
+          <!-- Card: Manga -->
+          <div class="stat-card motion-card-in">
+            <div class="stat-icon-wrapper icon-manga">
+              <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>
+            </div>
+            <div class="stat-content">
+              <span class="stat-value font-mono tabular-nums" id="statManga">0</span>
+              <span class="stat-title">Library Manga</span>
+              <span class="stat-desc">Active series in synced library</span>
+            </div>
+          </div>
+
+          <!-- Card: Chapters -->
+          <div class="stat-card motion-card-in motion-delay-1">
+            <div class="stat-icon-wrapper icon-chapters">
+              <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
+            </div>
+            <div class="stat-content">
+              <span class="stat-value font-mono tabular-nums" id="statChapters">0</span>
+              <span class="stat-title">Chapter States</span>
+              <span class="stat-desc">Read, bookmark &amp; page progress</span>
+            </div>
+          </div>
+
+          <!-- Card: Categories -->
+          <div class="stat-card motion-card-in motion-delay-1">
+            <div class="stat-icon-wrapper icon-categories">
+              <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+            </div>
+            <div class="stat-content">
+              <span class="stat-value font-mono tabular-nums" id="statCategories">0</span>
+              <span class="stat-title">Categories</span>
+              <span class="stat-desc">Custom manga organization folders</span>
+            </div>
+          </div>
+
+          <!-- Card: History -->
+          <div class="stat-card motion-card-in motion-delay-2">
+            <div class="stat-icon-wrapper icon-history">
+              <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+            </div>
+            <div class="stat-content">
+              <span class="stat-value font-mono tabular-nums" id="statHistory">0</span>
+              <span class="stat-title">History Entries</span>
+              <span class="stat-desc">Reading logs and durations</span>
+            </div>
+          </div>
+
+          <!-- Card: Preferences -->
+          <div class="stat-card motion-card-in motion-delay-2">
+            <div class="stat-icon-wrapper icon-preferences">
+              <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+            </div>
+            <div class="stat-content">
+              <span class="stat-value font-mono tabular-nums" id="statPreferences">0</span>
+              <span class="stat-title">Preferences</span>
+              <span class="stat-desc">Theme, reader &amp; app settings</span>
+            </div>
+          </div>
+
+          <!-- Card: Devices -->
+          <div class="stat-card motion-card-in motion-delay-3">
+            <div class="stat-icon-wrapper icon-devices">
+              <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect><line x1="12" y1="18" x2="12.01" y2="18"></line></svg>
+            </div>
+            <div class="stat-content">
+              <span class="stat-value font-mono tabular-nums" id="statDevices">0</span>
+              <span class="stat-title">Connected Devices</span>
+              <span class="stat-desc">Distinct client instances synced</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Quick Setup Helper -->
+        <div class="dashboard-section motion-fade-up motion-delay-2">
+          <div class="section-header">
+            <h3>Quick Setup (Kioku)</h3>
+            <p class="text-secondary">Configure your Android app with these connection settings</p>
+          </div>
+
+          <div class="setup-form-card">
+            <div class="form-group">
+              <label for="setupServerUrl">Server URL</label>
+              <div class="input-action-row">
+                <div class="input-wrapper">
+                  <input type="text" id="setupServerUrl" readonly spellcheck="false" class="font-mono">
+                </div>
+                <button type="button" class="btn btn-secondary btn-sm copy-btn" id="copyServerUrlBtn">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                  <span>Copy</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="setupApiKey">API Key</label>
+              <div class="input-action-row">
+                <div class="input-wrapper">
+                  <input type="password" id="setupApiKey" readonly spellcheck="false" class="font-mono">
+                  <button type="button" class="action-btn toggle-password-btn" data-target="setupApiKey" title="Show/Hide Key">
+                    <svg class="eye-open" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                    <svg class="eye-closed hidden" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>
+                  </button>
+                </div>
+                <button type="button" class="btn btn-secondary btn-sm copy-btn" id="copyApiKeyBtn">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                  <span>Copy</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="setup-steps-list">
+              <div class="step-item">
+                <span class="step-num">1</span>
+                <span>Open <strong>Kioku</strong> on your Android device.</span>
+              </div>
+              <div class="step-item">
+                <span class="step-num">2</span>
+                <span>Navigate to <strong>More &gt; Settings &gt; Sync</strong>.</span>
+              </div>
+              <div class="step-item">
+                <span class="step-num">3</span>
+                <span>Paste the <strong>Server URL</strong> and <strong>API Key</strong>.</span>
+              </div>
+              <div class="step-item">
+                <span class="step-num">4</span>
+                <span>Tap <strong>Test Connection</strong>, then <strong>Sync Now</strong>.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Account Management / Danger Zone -->
+        <div class="dashboard-section danger-zone-section motion-fade-up motion-delay-3">
+          <div class="section-header">
+            <h3>Account Actions</h3>
+            <p class="text-secondary">Key management and destructive actions</p>
+          </div>
+          <div class="danger-card">
+            <div class="danger-info">
+              <h4>Revoke Key &amp; Delete Synced Data</h4>
+              <p class="text-secondary text-sm">
+                Permanently delete this account and all synced manga, chapters, categories, history, and preferences from the server. This action is irreversible.
+              </p>
+            </div>
+            <button type="button" class="btn btn-danger" id="openDeleteAccountModalBtn">
+              <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
+              <span>Delete Account</span>
+            </button>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <div class="footer-content">
+        <div class="footer-left">
+          <img src="/logo.svg" alt="mihon-sync logo" class="footer-logo">
+          <span><strong>mihon-sync</strong> &bull; Self-hosted sync backend for <a href="https://github.com/nawocci/kioku" target="_blank" rel="noopener noreferrer" class="footer-brand-link">Kioku</a></span>
+        </div>
+        <div class="footer-right">
+          <a href="https://github.com/nawocci/mihon-sync" target="_blank" rel="noopener noreferrer" class="footer-link">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path></svg>
+            <span>GitHub</span>
+          </a>
+        </div>
+      </div>
+    </footer>
+
+    <!-- Delete Confirmation Modal -->
+    <div id="deleteModal" class="modal-overlay hidden">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div class="danger-icon-badge">
+            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+          </div>
+          <h3>Delete Account &amp; Synced Data?</h3>
+        </div>
+        <div class="modal-body">
+          <p class="text-secondary text-sm">
+            This will permanently remove your account, revoke your API key, and delete all associated synced records (manga, chapters, categories, reading history, and preferences) from this server.
+          </p>
+          <div class="form-group mt-4">
+            <label for="deleteConfirmInput">Type <strong class="text-danger">DELETE</strong> to confirm:</label>
+            <input type="text" id="deleteConfirmInput" placeholder="DELETE" autocomplete="off" spellcheck="false" class="font-mono">
+          </div>
+          <div id="deleteModalError" class="alert-banner alert-error hidden"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" id="cancelDeleteBtn">Cancel</button>
+          <button type="button" class="btn btn-danger" id="confirmDeleteBtn" disabled>
+            <span class="btn-text">Confirm Deletion</span>
+            <span class="btn-spinner hidden"></span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toast Notification Container -->
+    <div id="toastContainer" class="toast-container"></div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

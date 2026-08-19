@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/nawocci/mihon-sync/internal/auth"
+	"github.com/nawocci/mihon-sync/internal/config"
 	"github.com/nawocci/mihon-sync/internal/store"
 )
 
@@ -158,5 +159,108 @@ func TestStatus(t *testing.T) {
 	}
 	if st.MangaCount != 2 || st.ChapterCount != 1 || st.Rev != 1 {
 		t.Fatalf("unexpected status: %s", w.Body)
+	}
+}
+
+func TestServerInfo(t *testing.T) {
+	h, _ := setupTestServer(t)
+	w := doRequest(t, h, "GET", "/api/v1/info", "", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("info status = %d", w.Code)
+	}
+	var info serverInfoResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &info); err != nil {
+		t.Fatal(err)
+	}
+	if !info.AllowRegistration {
+		t.Fatalf("want allow_registration = true")
+	}
+}
+
+func TestRegister(t *testing.T) {
+	h, _ := setupTestServer(t)
+
+	w := doRequest(t, h, "POST", "/api/v1/auth/register", "", `{"label":"my test phone"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("register status = %d, want 201 (%s)", w.Code, w.Body)
+	}
+	var reg registerResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &reg); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(reg.APIKey, "mhk_") {
+		t.Fatalf("invalid generated key: %s", reg.APIKey)
+	}
+	if reg.Label != "my test phone" {
+		t.Fatalf("label = %s, want 'my test phone'", reg.Label)
+	}
+
+	// Verify the newly generated key works for auth check
+	w2 := doRequest(t, h, "GET", "/api/v1/auth/check", reg.APIKey, "")
+	if w2.Code != http.StatusOK {
+		t.Fatalf("auth check with new key failed: %d (%s)", w2.Code, w2.Body)
+	}
+}
+
+func TestRegisterDisabled(t *testing.T) {
+	st, err := store.Open(t.TempDir() + "/test.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	h := NewHandler(st, config.Config{AllowRegistration: false})
+	w := doRequest(t, h, "POST", "/api/v1/auth/register", "", `{"label":"phone"}`)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("register status = %d, want 403 when registration disabled", w.Code)
+	}
+}
+
+func TestDeleteAccount(t *testing.T) {
+	h, key := setupTestServer(t)
+
+	// Auth check should succeed initially
+	w := doRequest(t, h, "GET", "/api/v1/auth/check", key, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("initial auth check failed: %d", w.Code)
+	}
+
+	// Delete account
+	wDel := doRequest(t, h, "DELETE", "/api/v1/auth/account", key, "")
+	if wDel.Code != http.StatusOK {
+		t.Fatalf("delete account status = %d (%s)", wDel.Code, wDel.Body)
+	}
+
+	// Auth check should now fail (401)
+	wAfter := doRequest(t, h, "GET", "/api/v1/auth/check", key, "")
+	if wAfter.Code != http.StatusUnauthorized {
+		t.Fatalf("auth check after delete status = %d, want 401", wAfter.Code)
+	}
+}
+
+func TestWebStaticServing(t *testing.T) {
+	h, _ := setupTestServer(t)
+
+	// Test root index.html
+	wRoot := doRequest(t, h, "GET", "/", "", "")
+	if wRoot.Code != http.StatusOK {
+		t.Fatalf("GET / status = %d", wRoot.Code)
+	}
+	if !strings.Contains(wRoot.Body.String(), "<!DOCTYPE html>") {
+		t.Fatalf("GET / did not return HTML")
+	}
+
+	// Test static assets
+	wCSS := doRequest(t, h, "GET", "/app.css", "", "")
+	if wCSS.Code != http.StatusOK {
+		t.Fatalf("GET /app.css status = %d", wCSS.Code)
+	}
+	wJS := doRequest(t, h, "GET", "/app.js", "", "")
+	if wJS.Code != http.StatusOK {
+		t.Fatalf("GET /app.js status = %d", wJS.Code)
+	}
+	wLogo := doRequest(t, h, "GET", "/logo.svg", "", "")
+	if wLogo.Code != http.StatusOK {
+		t.Fatalf("GET /logo.svg status = %d", wLogo.Code)
 	}
 }

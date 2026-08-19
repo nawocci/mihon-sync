@@ -61,15 +61,25 @@ go build ./cmd/mihon-sync
 
 ## Configuration (environment variables)
 
-| Variable                   | Default             | Description                                   |
-| -------------------------- | ------------------- | --------------------------------------------- |
-| `MIHON_SYNC_ADDR`          | `:8080`             | Listen address                                |
-| `MIHON_SYNC_DB`            | `./mihon-sync.db`   | SQLite database path                          |
-| `MIHON_SYNC_RETENTION_DAYS`| `30`                | Tombstone retention before GC                 |
-| `MIHON_SYNC_API_KEY`       | —                   | Bootstrap key; account ensured on serve start |
+| Variable                      | Default             | Description                                   |
+| ----------------------------- | ------------------- | --------------------------------------------- |
+| `MIHON_SYNC_ADDR`             | `:8080`             | Listen address                                |
+| `MIHON_SYNC_DB`               | `./mihon-sync.db`   | SQLite database path                          |
+| `MIHON_SYNC_RETENTION_DAYS`   | `30`                | Tombstone retention before GC                 |
+| `MIHON_SYNC_API_KEY`          | —                   | Bootstrap key; account ensured on serve start |
+| `MIHON_SYNC_ALLOW_REGISTRATION`| `true`             | Allow creating API keys from Web UI / API     |
 
 Put the server behind a reverse proxy with TLS (Caddy, nginx, Traefik…) if
 it is reachable from the internet — API keys are bearer credentials.
+
+## Web Dashboard
+
+`mihon-sync` includes a built-in, responsive web dashboard served at `/`:
+- **Statistics & Metrics**: Real-time overview of library manga, chapter read progress, categories, history, preferences, and connected devices.
+- **API Key & Auth**: Simple login with existing API key, or key generation (registration).
+- **Quick Setup for Kioku**: 1-click copy for Server URL and API Key, and setup instructions.
+- **Theme Support**: Dark, light, and system theme switching matching Kioku aesthetics.
+- **Account Actions**: Revoke API key and wipe synced data with confirmation.
 
 ## Key management
 
@@ -80,15 +90,20 @@ mihon-sync revokekey mhk_...                # delete account + all its data
 ```
 
 When running in Docker: `docker compose exec mihon-sync /mihon-sync genkey`.
+Alternatively, generate an API key directly from the Web Dashboard.
 
 ## HTTP API
 
-All endpoints except `/healthz` require `Authorization: Bearer <key>`.
+All endpoints except `/healthz`, `/api/v1/info`, `/api/v1/auth/register`, and `/` require `Authorization: Bearer <key>`.
 
 | Endpoint                        | Description                                    |
 | ------------------------------- | ---------------------------------------------- |
+| `GET /`                         | Embedded Web Dashboard                         |
 | `GET /healthz`                  | Liveness probe                                 |
+| `GET /api/v1/info`              | Server capabilities & registration status      |
+| `POST /api/v1/auth/register`    | Generate new API key (if registration enabled)  |
 | `GET /api/v1/auth/check`        | Validate the API key                           |
+| `DELETE /api/v1/auth/account`   | Revoke current key and delete account data     |
 | `POST /api/v1/sync/push`        | Push a batch of changes; returns new revision  |
 | `GET /api/v1/sync/pull?since=N` | Changes with revision > N (incl. tombstones)   |
 | `GET /api/v1/sync/status`       | Revision + entity counts for the account       |

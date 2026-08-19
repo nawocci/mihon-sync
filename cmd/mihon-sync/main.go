@@ -62,10 +62,11 @@ commands:
   listkeys                 list API key hashes and labels
 
 environment:
-  MIHON_SYNC_ADDR            listen address (default ":8080")
-  MIHON_SYNC_DB              SQLite database path (default "./mihon-sync.db")
-  MIHON_SYNC_RETENTION_DAYS  tombstone retention in days (default 30)
-  MIHON_SYNC_API_KEY         bootstrap API key, account created on serve start
+  MIHON_SYNC_ADDR                listen address (default ":8080")
+  MIHON_SYNC_DB                  SQLite database path (default "./mihon-sync.db")
+  MIHON_SYNC_RETENTION_DAYS      tombstone retention in days (default 30)
+  MIHON_SYNC_API_KEY             bootstrap API key, account created on serve start
+  MIHON_SYNC_ALLOW_REGISTRATION  allow web/API account registration (default true)
 `)
 }
 
@@ -111,7 +112,7 @@ func cmdServe(args []string) error {
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           syncapi.NewHandler(st),
+		Handler:           syncapi.NewHandler(st, cfg),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       60 * time.Second,
 		WriteTimeout:      120 * time.Second,

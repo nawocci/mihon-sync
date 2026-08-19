@@ -33,6 +33,18 @@ func (s *Store) DeleteAccount(ctx context.Context, keyHash string) error {
 	return nil
 }
 
+// DeleteAccountByID removes the account by ID and cascades deletion across all synced data.
+func (s *Store) DeleteAccountByID(ctx context.Context, id int64) error {
+	res, err := s.db.ExecContext(ctx, "DELETE FROM accounts WHERE id = ?", id)
+	if err != nil {
+		return fmt.Errorf("delete account: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrAccountNotFound
+	}
+	return nil
+}
+
 func (s *Store) AccountByKeyHash(ctx context.Context, keyHash string) (*Account, error) {
 	var a Account
 	err := s.db.QueryRowContext(ctx,

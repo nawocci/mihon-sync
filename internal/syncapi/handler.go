@@ -8,23 +8,80 @@ import (
 	"strconv"
 
 	"github.com/nawocci/mihon-sync/internal/auth"
+	"github.com/nawocci/mihon-sync/internal/config"
 	"github.com/nawocci/mihon-sync/internal/store"
+	"github.com/nawocci/mihon-sync/internal/web"
 )
 
 // maxPushBody bounds push payloads; an initial full-library upload can be
 // large (tens of thousands of chapters).
 const maxPushBody = 64 << 20
 
-func NewHandler(st *store.Store) http.Handler {
+func NewHandler(st *store.Store, cfgs ...config.Config) http.Handler {
+	var cfg config.Config
+	if len(cfgs) > 0 {
+		cfg = cfgs[0]
+	} else {
+		cfg = config.Config{AllowRegistration: true}
+	}
+
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 
+	mux.HandleFunc("GET /api/v1/info", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, serverInfoResponse{
+			AllowRegistration: cfg.AllowRegistration,
+			Version:           "0.1.0",
+		})
+	})
+
+	mux.HandleFunc("POST /api/v1/auth/register", func(w http.ResponseWriter, r *http.Request) {
+		if !cfg.AllowRegistration {
+			writeError(w, http.StatusForbidden, "registration is disabled on this server")
+			return
+		}
+		var req registerRequest
+		if r.Body != nil && r.ContentLength > 0 {
+			_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req)
+		}
+
+		key, err := auth.GenerateKey()
+		if err != nil {
+			slog.Error("generate key failed", "error", err)
+			writeError(w, http.StatusInternalServerError, "failed to generate API key")
+			return
+		}
+
+		if err := st.CreateAccount(r.Context(), auth.HashKey(key), req.Label); err != nil {
+			slog.Error("create account failed", "error", err)
+			writeError(w, http.StatusInternalServerError, "failed to create account")
+			return
+		}
+
+		slog.Info("new account registered via web/api", "label", req.Label)
+		writeJSON(w, http.StatusCreated, registerResponse{
+			APIKey: key,
+			Label:  req.Label,
+		})
+	})
+
 	requireAuth := auth.Middleware(st, writeError)
 
 	mux.Handle("GET /api/v1/auth/check", requireAuth(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	})))
+
+	mux.Handle("DELETE /api/v1/auth/account", requireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		accountID, _ := auth.AccountIDFromContext(r.Context())
+		if err := st.DeleteAccountByID(r.Context(), accountID); err != nil {
+			slog.Error("delete account failed", "account", accountID, "error", err)
+			writeError(w, http.StatusInternalServerError, "failed to delete account")
+			return
+		}
+		slog.Info("account deleted via web/api", "account", accountID)
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	})))
 
@@ -37,6 +94,9 @@ func NewHandler(st *store.Store) http.Handler {
 	mux.Handle("GET /api/v1/sync/status", requireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handleStatus(w, r, st)
 	})))
+
+	// Serve embedded web frontend for everything else
+	mux.Handle("/", web.Handler())
 
 	return mux
 }

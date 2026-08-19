@@ -100,6 +100,20 @@ type statusResponse struct {
 	AccountCreatedAt int64 `json:"account_created_at"`
 }
 
+type serverInfoResponse struct {
+	AllowRegistration bool   `json:"allow_registration"`
+	Version           string `json:"version"`
+}
+
+type registerRequest struct {
+	Label string `json:"label"`
+}
+
+type registerResponse struct {
+	APIKey string `json:"api_key"`
+	Label  string `json:"label"`
+}
+
 type errorResponse struct {
 	Error string `json:"error"`
 }
