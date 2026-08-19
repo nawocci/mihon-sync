@@ -47,7 +47,7 @@ func TestMangaVersionWins(t *testing.T) {
 	ctx := context.Background()
 
 	push := func(title string, version int64) {
-		_, _, err := st.ApplyChanges(ctx, accID, 0, &ChangeSet{Mangas: []Manga{{
+		_, _, err := st.ApplyChanges(ctx, accID, 0, "", &ChangeSet{Mangas: []Manga{{
 			SourceID: 1, URL: "/m/a", Title: title, ClientVersion: version,
 		}}})
 		if err != nil {
@@ -70,13 +70,13 @@ func TestMangaFavoriteORMerge(t *testing.T) {
 	st, accID := openTestStore(t)
 	ctx := context.Background()
 
-	if _, _, err := st.ApplyChanges(ctx, accID, 0, &ChangeSet{Mangas: []Manga{{
+	if _, _, err := st.ApplyChanges(ctx, accID, 0, "", &ChangeSet{Mangas: []Manga{{
 		SourceID: 1, URL: "/m/a", Favorite: true, ClientVersion: 5,
 	}}}); err != nil {
 		t.Fatal(err)
 	}
 	// A newer version without favorite must not unset it.
-	if _, _, err := st.ApplyChanges(ctx, accID, 0, &ChangeSet{Mangas: []Manga{{
+	if _, _, err := st.ApplyChanges(ctx, accID, 0, "", &ChangeSet{Mangas: []Manga{{
 		SourceID: 1, URL: "/m/a", Favorite: false, ClientVersion: 9,
 	}}}); err != nil {
 		t.Fatal(err)
@@ -91,7 +91,7 @@ func TestMangaDeleteAndReadd(t *testing.T) {
 	ctx := context.Background()
 
 	apply := func(version int64, deleted bool) {
-		_, _, err := st.ApplyChanges(ctx, accID, 0, &ChangeSet{Mangas: []Manga{{
+		_, _, err := st.ApplyChanges(ctx, accID, 0, "", &ChangeSet{Mangas: []Manga{{
 			SourceID: 1, URL: "/m/a", ClientVersion: version, Deleted: deleted,
 		}}})
 		if err != nil {
@@ -115,7 +115,7 @@ func TestChapterReadBookmarkORMerge(t *testing.T) {
 	ctx := context.Background()
 
 	push := func(read, bookmark bool, page, version int64) {
-		_, _, err := st.ApplyChanges(ctx, accID, 0, &ChangeSet{Chapters: []Chapter{{
+		_, _, err := st.ApplyChanges(ctx, accID, 0, "", &ChangeSet{Chapters: []Chapter{{
 			MangaSourceID: 1, MangaURL: "/m/a", URL: "/c/1",
 			Read: read, Bookmark: bookmark, LastPageRead: page, ClientVersion: version,
 		}}})
@@ -152,7 +152,7 @@ func TestHistoryMaxMerge(t *testing.T) {
 	ctx := context.Background()
 
 	push := func(lastRead, duration int64) {
-		_, _, err := st.ApplyChanges(ctx, accID, 0, &ChangeSet{History: []HistoryEntry{{
+		_, _, err := st.ApplyChanges(ctx, accID, 0, "", &ChangeSet{History: []HistoryEntry{{
 			MangaSourceID: 1, MangaURL: "/m/a", ChapterURL: "/c/1",
 			LastRead: lastRead, ReadDuration: duration,
 		}}})
@@ -181,13 +181,13 @@ func TestCategoryAndPreferenceTombstones(t *testing.T) {
 	st, accID := openTestStore(t)
 	ctx := context.Background()
 
-	if _, _, err := st.ApplyChanges(ctx, accID, 0, &ChangeSet{
+	if _, _, err := st.ApplyChanges(ctx, accID, 0, "", &ChangeSet{
 		Categories:  []Category{{Name: "Reading", Order: 1}},
 		Preferences: []Preference{{Key: "theme", Type: "string", Value: json.RawMessage(`"dark"`)}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := st.ApplyChanges(ctx, accID, 0, &ChangeSet{
+	if _, _, err := st.ApplyChanges(ctx, accID, 0, "", &ChangeSet{
 		Categories:  []Category{{Name: "Reading", Deleted: true}},
 		Preferences: []Preference{{Key: "theme", Type: "string", Deleted: true}},
 	}); err != nil {
@@ -208,14 +208,14 @@ func TestPushReturnsOtherDevicesChanges(t *testing.T) {
 	ctx := context.Background()
 
 	// Device A pushes at watermark 0.
-	revA, _, err := st.ApplyChanges(ctx, accID, 0, &ChangeSet{
+	revA, _, err := st.ApplyChanges(ctx, accID, 0, "", &ChangeSet{
 		Mangas: []Manga{{SourceID: 1, URL: "/m/a"}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Device B pushes at watermark 0 (hasn't seen A's change yet).
-	revB, seenByB, err := st.ApplyChanges(ctx, accID, 0, &ChangeSet{
+	revB, seenByB, err := st.ApplyChanges(ctx, accID, 0, "", &ChangeSet{
 		Mangas: []Manga{{SourceID: 1, URL: "/m/b"}},
 	})
 	if err != nil {
@@ -230,7 +230,7 @@ func TestPushReturnsOtherDevicesChanges(t *testing.T) {
 	}
 
 	// A pushes again at watermark revB: nothing new to report.
-	_, seenByA, err := st.ApplyChanges(ctx, accID, revB, &ChangeSet{
+	_, seenByA, err := st.ApplyChanges(ctx, accID, revB, "", &ChangeSet{
 		Mangas: []Manga{{SourceID: 1, URL: "/m/c"}},
 	})
 	if err != nil {
@@ -245,11 +245,11 @@ func TestDeltaPullAndRevisionMonotonicity(t *testing.T) {
 	st, accID := openTestStore(t)
 	ctx := context.Background()
 
-	rev1, _, err := st.ApplyChanges(ctx, accID, 0, &ChangeSet{Mangas: []Manga{{SourceID: 1, URL: "/m/a"}}})
+	rev1, _, err := st.ApplyChanges(ctx, accID, 0, "", &ChangeSet{Mangas: []Manga{{SourceID: 1, URL: "/m/a"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	rev2, _, err := st.ApplyChanges(ctx, accID, 0, &ChangeSet{Mangas: []Manga{{SourceID: 1, URL: "/m/b"}}})
+	rev2, _, err := st.ApplyChanges(ctx, accID, 0, "", &ChangeSet{Mangas: []Manga{{SourceID: 1, URL: "/m/b"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +289,7 @@ func TestAccountIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, _, err := st.ApplyChanges(ctx, accA, 0, &ChangeSet{Mangas: []Manga{{SourceID: 1, URL: "/m/a"}}}); err != nil {
+	if _, _, err := st.ApplyChanges(ctx, accA, 0, "", &ChangeSet{Mangas: []Manga{{SourceID: 1, URL: "/m/a"}}}); err != nil {
 		t.Fatal(err)
 	}
 	cs, _, err := st.ChangesSince(ctx, accB.ID, 0)
@@ -305,7 +305,7 @@ func TestGCRemovesOldTombstones(t *testing.T) {
 	st, accID := openTestStore(t)
 	ctx := context.Background()
 
-	if _, _, err := st.ApplyChanges(ctx, accID, 0, &ChangeSet{
+	if _, _, err := st.ApplyChanges(ctx, accID, 0, "", &ChangeSet{
 		Categories: []Category{{Name: "Old", Deleted: true}},
 	}); err != nil {
 		t.Fatal(err)
@@ -327,5 +327,29 @@ func TestGCRemovesOldTombstones(t *testing.T) {
 	cs, _, _ = st.ChangesSince(ctx, accID, 0)
 	if len(cs.Categories) != 0 {
 		t.Fatal("expired tombstone survived GC")
+	}
+}
+
+func TestDeviceTracking(t *testing.T) {
+	st, accID := openTestStore(t)
+	ctx := context.Background()
+
+	if _, _, err := st.ApplyChanges(ctx, accID, 0, "device-phone", &ChangeSet{
+		Mangas: []Manga{{SourceID: 1, URL: "/m/a"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.ApplyChanges(ctx, accID, 0, "device-tablet", &ChangeSet{
+		Mangas: []Manga{{SourceID: 1, URL: "/m/b"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	status, err := st.Status(ctx, accID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.DeviceCount != 2 {
+		t.Fatalf("expected 2 devices, got %d", status.DeviceCount)
 	}
 }

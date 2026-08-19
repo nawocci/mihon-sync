@@ -59,7 +59,7 @@ func handlePush(w http.ResponseWriter, r *http.Request, st *store.Store) {
 		return
 	}
 
-	rev, others, err := st.ApplyChanges(r.Context(), accountID, req.Since, dtoToStore(&req.Changes))
+	rev, others, err := st.ApplyChanges(r.Context(), accountID, req.Since, req.DeviceID, dtoToStore(&req.Changes))
 	if err != nil {
 		slog.Error("push failed", "account", accountID, "device", req.DeviceID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to apply changes")
@@ -103,6 +103,7 @@ func handleStatus(w http.ResponseWriter, r *http.Request, st *store.Store) {
 		CategoryCount:    status.CategoryCount,
 		HistoryCount:     status.HistoryCount,
 		PreferenceCount:  status.PreferenceCount,
+		DeviceCount:      status.DeviceCount,
 		AccountCreatedAt: status.AccountCreatedAt,
 	})
 }

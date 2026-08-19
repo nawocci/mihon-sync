@@ -99,5 +99,6 @@ type Status struct {
 	CategoryCount    int64
 	HistoryCount     int64
 	PreferenceCount  int64
+	DeviceCount      int64
 	AccountCreatedAt int64
 }

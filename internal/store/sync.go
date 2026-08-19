@@ -19,6 +19,7 @@ import (
 func (s *Store) ApplyChanges(
 	ctx context.Context,
 	accountID, since int64,
+	deviceID string,
 	cs *ChangeSet,
 ) (int64, *ChangeSet, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -34,6 +35,14 @@ func (s *Store) ApplyChanges(
 	}
 
 	now := time.Now().Unix()
+
+	if deviceID != "" {
+		_, _ = tx.ExecContext(ctx,
+			`INSERT INTO devices(account_id, device_id, last_seen)
+			 VALUES (?, ?, ?)
+			 ON CONFLICT(account_id, device_id) DO UPDATE SET last_seen = excluded.last_seen`,
+			accountID, deviceID, now)
+	}
 
 	for _, m := range cs.Mangas {
 		if err := mergeManga(ctx, tx, accountID, rev, now, m); err != nil {
@@ -116,6 +125,9 @@ func mergeManga(ctx context.Context, tx *sql.Tx, accountID, rev, now int64, in M
 	if winner.ClientVersion == ex.ClientVersion && ex.ClientVersion > in.ClientVersion {
 		// Existing won: a deletion still sticks unless the winner re-added.
 		deleted = ex.Deleted || in.Deleted
+	}
+	if in.Favorite && !in.Deleted {
+		deleted = false
 	}
 	merged := Manga{
 		SourceID:       in.SourceID,
@@ -422,6 +434,7 @@ func (s *Store) Status(ctx context.Context, accountID int64) (*Status, error) {
 		{"SELECT COUNT(*) FROM categories WHERE account_id = ? AND deleted = 0", &st.CategoryCount},
 		{"SELECT COUNT(*) FROM history WHERE account_id = ?", &st.HistoryCount},
 		{"SELECT COUNT(*) FROM preferences WHERE account_id = ? AND deleted = 0", &st.PreferenceCount},
+		{"SELECT COUNT(*) FROM devices WHERE account_id = ?", &st.DeviceCount},
 	}
 	for _, c := range counts {
 		if err := s.db.QueryRowContext(ctx, c.query, accountID).Scan(c.dst); err != nil {

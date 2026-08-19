@@ -45,6 +45,13 @@ CREATE TABLE IF NOT EXISTS accounts (
     created_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS devices (
+    account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    device_id  TEXT NOT NULL,
+    last_seen  INTEGER NOT NULL,
+    PRIMARY KEY (account_id, device_id)
+);
+
 CREATE TABLE IF NOT EXISTS mangas (
     account_id      INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     source_id       INTEGER NOT NULL,

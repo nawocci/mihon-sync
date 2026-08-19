@@ -96,6 +96,7 @@ type statusResponse struct {
 	CategoryCount    int64 `json:"category_count"`
 	HistoryCount     int64 `json:"history_count"`
 	PreferenceCount  int64 `json:"preference_count"`
+	DeviceCount      int64 `json:"device_count"`
 	AccountCreatedAt int64 `json:"account_created_at"`
 }
 
