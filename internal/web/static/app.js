@@ -67,6 +67,7 @@
     setupApiKey: document.getElementById('setupApiKey'),
     copyServerUrlBtn: document.getElementById('copyServerUrlBtn'),
     copyApiKeyBtn: document.getElementById('copyApiKeyBtn'),
+    qrCanvas: document.getElementById('qrCanvas'),
 
     // Delete Modal
     dangerZoneSection: document.querySelector('.danger-zone-section'),
@@ -249,6 +250,9 @@
     const serverUrl = window.location.origin;
     el.setupServerUrl.value = serverUrl;
     el.setupApiKey.value = currentApiKey;
+
+    // Render Setup QR
+    renderQR(`${serverUrl}|${currentApiKey}`);
   }
 
   function animateValue(elem, endValue) {
@@ -563,6 +567,41 @@
         if (toast.parentNode) toast.parentNode.removeChild(toast);
       }, 250);
     }, 2800);
+  }
+
+  // Standard QR Code Generator on Canvas
+  function renderQR(text) {
+    const canvas = el.qrCanvas;
+    if (!canvas || typeof qrcode === 'undefined') return;
+    const ctx = canvas.getContext('2d');
+    const size = canvas.width;
+
+    // Clear canvas with crisp white background
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, size, size);
+
+    try {
+      const qr = qrcode(0, 'M');
+      qr.addData(text);
+      qr.make();
+
+      const count = qr.getModuleCount();
+      const quietZone = 2;
+      const totalCells = count + quietZone * 2;
+      const cellSize = Math.floor(size / totalCells);
+      const offset = Math.floor((size - cellSize * count) / 2);
+
+      ctx.fillStyle = '#0f0d13';
+      for (let r = 0; r < count; r++) {
+        for (let c = 0; c < count; c++) {
+          if (qr.isDark(r, c)) {
+            ctx.fillRect(offset + c * cellSize, offset + r * cellSize, cellSize, cellSize);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('QR render error:', e);
+    }
   }
 
   // Start application

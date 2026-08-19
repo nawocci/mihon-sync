@@ -77,7 +77,7 @@ it is reachable from the internet — API keys are bearer credentials.
 `mihon-sync` includes a built-in, responsive web dashboard served at `/`:
 - **Statistics & Metrics**: Real-time overview of library manga, chapter read progress, categories, history, preferences, and connected devices.
 - **API Key & Auth**: Simple login with existing API key, or key generation (registration).
-- **Quick Setup for Kioku**: 1-click copy for Server URL and API Key, and setup instructions.
+- **Quick Setup for Kioku**: 1-click copy for Server URL and API Key, setup instructions, and QR code view.
 - **Theme Support**: Dark, light, and system theme switching matching Kioku aesthetics.
 - **Account Actions**: Revoke API key and wipe synced data with confirmation.
 
