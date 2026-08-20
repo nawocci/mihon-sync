@@ -488,20 +488,26 @@ func (s *Store) Status(ctx context.Context, accountID int64) (*Status, error) {
 		return nil, err
 	}
 
+	now := time.Now().Unix()
+	cutoff24h := now - 24*3600
+	// Prune devices inactive for > 24 hours
+	_, _ = s.db.ExecContext(ctx, "DELETE FROM devices WHERE account_id = ? AND last_seen < ?", accountID, cutoff24h)
+
 	counts := []struct {
 		query string
+		args  []any
 		dst   *int64
 	}{
-		{"SELECT COUNT(*) FROM mangas WHERE account_id = ? AND deleted = 0", &st.MangaCount},
-		{"SELECT COUNT(*) FROM chapters WHERE account_id = ?", &st.ChapterCount},
-		{"SELECT COUNT(*) FROM categories WHERE account_id = ? AND deleted = 0", &st.CategoryCount},
-		{"SELECT COUNT(*) FROM history WHERE account_id = ?", &st.HistoryCount},
-		{"SELECT COUNT(*) FROM preferences WHERE account_id = ? AND deleted = 0", &st.PreferenceCount},
-		{"SELECT COUNT(*) FROM extension_stores WHERE account_id = ? AND deleted = 0", &st.ExtensionStoreCount},
-		{"SELECT COUNT(*) FROM devices WHERE account_id = ?", &st.DeviceCount},
+		{"SELECT COUNT(*) FROM mangas WHERE account_id = ? AND deleted = 0", []any{accountID}, &st.MangaCount},
+		{"SELECT COUNT(*) FROM chapters WHERE account_id = ?", []any{accountID}, &st.ChapterCount},
+		{"SELECT COUNT(*) FROM categories WHERE account_id = ? AND deleted = 0", []any{accountID}, &st.CategoryCount},
+		{"SELECT COUNT(*) FROM history WHERE account_id = ?", []any{accountID}, &st.HistoryCount},
+		{"SELECT COUNT(*) FROM preferences WHERE account_id = ? AND deleted = 0", []any{accountID}, &st.PreferenceCount},
+		{"SELECT COUNT(*) FROM extension_stores WHERE account_id = ? AND deleted = 0", []any{accountID}, &st.ExtensionStoreCount},
+		{"SELECT COUNT(*) FROM devices WHERE account_id = ? AND last_seen >= ?", []any{accountID, cutoff24h}, &st.DeviceCount},
 	}
 	for _, c := range counts {
-		if err := s.db.QueryRowContext(ctx, c.query, accountID).Scan(c.dst); err != nil {
+		if err := s.db.QueryRowContext(ctx, c.query, c.args...).Scan(c.dst); err != nil {
 			return nil, err
 		}
 	}

@@ -70,7 +70,11 @@ func NewHandler(st *store.Store, cfgs ...config.Config) http.Handler {
 
 	requireAuth := auth.Middleware(st, writeError)
 
-	mux.Handle("GET /api/v1/auth/check", requireAuth(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	mux.Handle("GET /api/v1/auth/check", requireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		accountID, _ := auth.AccountIDFromContext(r.Context())
+		if devID := extractDeviceID(r); devID != "" {
+			_ = st.TouchDevice(r.Context(), accountID, devID)
+		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	})))
 
@@ -101,6 +105,13 @@ func NewHandler(st *store.Store, cfgs ...config.Config) http.Handler {
 	return mux
 }
 
+func extractDeviceID(r *http.Request) string {
+	if id := r.Header.Get("X-Device-ID"); id != "" {
+		return id
+	}
+	return r.URL.Query().Get("device_id")
+}
+
 func handlePush(w http.ResponseWriter, r *http.Request, st *store.Store) {
 	accountID, _ := auth.AccountIDFromContext(r.Context())
 
@@ -119,18 +130,27 @@ func handlePush(w http.ResponseWriter, r *http.Request, st *store.Store) {
 		return
 	}
 
-	rev, others, err := st.ApplyChanges(r.Context(), accountID, req.Since, req.DeviceID, dtoToStore(&req.Changes))
+	deviceID := req.DeviceID
+	if deviceID == "" {
+		deviceID = extractDeviceID(r)
+	}
+
+	rev, others, err := st.ApplyChanges(r.Context(), accountID, req.Since, deviceID, dtoToStore(&req.Changes))
 	if err != nil {
-		slog.Error("push failed", "account", accountID, "device", req.DeviceID, "error", err)
+		slog.Error("push failed", "account", accountID, "device", deviceID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to apply changes")
 		return
 	}
-	slog.Debug("push applied", "account", accountID, "device", req.DeviceID, "rev", rev)
+	slog.Debug("push applied", "account", accountID, "device", deviceID, "rev", rev)
 	writeJSON(w, http.StatusOK, pushResponse{Rev: rev, Changes: storeToDTO(others)})
 }
 
 func handlePull(w http.ResponseWriter, r *http.Request, st *store.Store) {
 	accountID, _ := auth.AccountIDFromContext(r.Context())
+
+	if devID := extractDeviceID(r); devID != "" {
+		_ = st.TouchDevice(r.Context(), accountID, devID)
+	}
 
 	since, err := strconv.ParseInt(r.URL.Query().Get("since"), 10, 64)
 	if err != nil || since < 0 {

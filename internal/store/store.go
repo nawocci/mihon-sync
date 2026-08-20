@@ -175,3 +175,18 @@ func (s *Store) GC(ctx context.Context, retention time.Duration) error {
 	}
 	return nil
 }
+
+// TouchDevice records or refreshes the last-seen timestamp for a device.
+func (s *Store) TouchDevice(ctx context.Context, accountID int64, deviceID string) error {
+	if deviceID == "" {
+		return nil
+	}
+	now := time.Now().Unix()
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO devices(account_id, device_id, last_seen)
+		 VALUES (?, ?, ?)
+		 ON CONFLICT(account_id, device_id) DO UPDATE SET last_seen = excluded.last_seen`,
+		accountID, deviceID, now)
+	return err
+}
+
