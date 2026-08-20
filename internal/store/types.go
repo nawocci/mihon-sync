@@ -10,7 +10,6 @@ type Manga struct {
 	SourceID       int64
 	URL            string
 	Title          string
-	ThumbnailURL   string
 	Favorite       bool
 	ChapterFlags   int64
 	ViewerFlags    int64

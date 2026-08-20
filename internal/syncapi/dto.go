@@ -13,7 +13,6 @@ type mangaDTO struct {
 	SourceID       int64  `json:"source_id"`
 	URL            string `json:"url"`
 	Title          string `json:"title"`
-	ThumbnailURL   string `json:"thumbnail_url,omitempty"`
 	Favorite       bool   `json:"favorite"`
 	ChapterFlags   int64  `json:"chapter_flags"`
 	ViewerFlags    int64  `json:"viewer_flags"`
@@ -133,7 +132,7 @@ func dtoToStore(cs *changeSetDTO) *store.ChangeSet {
 	out := &store.ChangeSet{}
 	for _, m := range cs.Mangas {
 		out.Mangas = append(out.Mangas, store.Manga{
-			SourceID: m.SourceID, URL: m.URL, Title: m.Title, ThumbnailURL: m.ThumbnailURL,
+			SourceID: m.SourceID, URL: m.URL, Title: m.Title,
 			Favorite: m.Favorite, ChapterFlags: m.ChapterFlags, ViewerFlags: m.ViewerFlags,
 			UpdateStrategy: m.UpdateStrategy, Notes: m.Notes, DateAdded: m.DateAdded,
 			ClientVersion: m.ClientVersion, Deleted: m.Deleted,
@@ -181,7 +180,7 @@ func storeToDTO(cs *store.ChangeSet) changeSetDTO {
 	out := changeSetDTO{}
 	for _, m := range cs.Mangas {
 		out.Mangas = append(out.Mangas, mangaDTO{
-			SourceID: m.SourceID, URL: m.URL, Title: m.Title, ThumbnailURL: m.ThumbnailURL,
+			SourceID: m.SourceID, URL: m.URL, Title: m.Title,
 			Favorite: m.Favorite, ChapterFlags: m.ChapterFlags, ViewerFlags: m.ViewerFlags,
 			UpdateStrategy: m.UpdateStrategy, Notes: m.Notes, DateAdded: m.DateAdded,
 			ClientVersion: m.ClientVersion, Deleted: m.Deleted,

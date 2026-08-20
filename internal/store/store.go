@@ -57,7 +57,6 @@ CREATE TABLE IF NOT EXISTS mangas (
     source_id       INTEGER NOT NULL,
     url             TEXT NOT NULL,
     title           TEXT NOT NULL DEFAULT '',
-    thumbnail_url   TEXT NOT NULL DEFAULT '',
     favorite        INTEGER NOT NULL DEFAULT 1,
     chapter_flags   INTEGER NOT NULL DEFAULT 0,
     viewer_flags    INTEGER NOT NULL DEFAULT 0,
@@ -159,8 +158,6 @@ func (s *Store) migrate() error {
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
-	// Best-effort column additions for schema evolution
-	_, _ = s.db.Exec("ALTER TABLE mangas ADD COLUMN thumbnail_url TEXT NOT NULL DEFAULT ''")
 	return nil
 }
 
