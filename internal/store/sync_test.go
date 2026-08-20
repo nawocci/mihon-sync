@@ -334,13 +334,9 @@ func TestDeviceTracking(t *testing.T) {
 	st, accID := openTestStore(t)
 	ctx := context.Background()
 
-	if _, _, err := st.ApplyChanges(ctx, accID, 0, "device-phone", &ChangeSet{
+	// Push from device A
+	if _, _, err := st.ApplyChanges(ctx, accID, 0, "device-a", &ChangeSet{
 		Mangas: []Manga{{SourceID: 1, URL: "/m/a"}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := st.ApplyChanges(ctx, accID, 0, "device-tablet", &ChangeSet{
-		Mangas: []Manga{{SourceID: 1, URL: "/m/b"}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -349,7 +345,76 @@ func TestDeviceTracking(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if status.DeviceCount != 1 {
+		t.Fatalf("expected 1 device, got %d", status.DeviceCount)
+	}
+
+	// Push from device B
+	if _, _, err := st.ApplyChanges(ctx, accID, 0, "device-b", &ChangeSet{
+		Mangas: []Manga{{SourceID: 1, URL: "/m/b"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	status, err = st.Status(ctx, accID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if status.DeviceCount != 2 {
 		t.Fatalf("expected 2 devices, got %d", status.DeviceCount)
+	}
+}
+
+func TestExtensionStoreSyncAndTombstones(t *testing.T) {
+	st, accID := openTestStore(t)
+	ctx := context.Background()
+
+	if _, _, err := st.ApplyChanges(ctx, accID, 0, "", &ChangeSet{
+		ExtensionStores: []ExtensionStore{{
+			IndexURL:   "https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json",
+			Name:       "Keiyoushi",
+			BadgeLabel: "Official",
+			SigningKey: "abcd1234key",
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	cs, _, err := st.ChangesSince(ctx, accID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cs.ExtensionStores) != 1 {
+		t.Fatalf("expected 1 extension store, got %d", len(cs.ExtensionStores))
+	}
+	es := cs.ExtensionStores[0]
+	if es.Name != "Keiyoushi" || es.SigningKey != "abcd1234key" {
+		t.Fatalf("unexpected extension store data: %+v", es)
+	}
+
+	status, err := st.Status(ctx, accID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.ExtensionStoreCount != 1 {
+		t.Fatalf("expected 1 active extension store, got %d", status.ExtensionStoreCount)
+	}
+
+	// Tombstone deletion
+	if _, _, err := st.ApplyChanges(ctx, accID, 0, "", &ChangeSet{
+		ExtensionStores: []ExtensionStore{{
+			IndexURL: "https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json",
+			Deleted:  true,
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	cs, _, err = st.ChangesSince(ctx, accID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cs.ExtensionStores) != 1 || !cs.ExtensionStores[0].Deleted {
+		t.Fatalf("expected tombstoned extension store, got %+v", cs.ExtensionStores)
 	}
 }

@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS mangas (
     source_id       INTEGER NOT NULL,
     url             TEXT NOT NULL,
     title           TEXT NOT NULL DEFAULT '',
+    thumbnail_url   TEXT NOT NULL DEFAULT '',
     favorite        INTEGER NOT NULL DEFAULT 1,
     chapter_flags   INTEGER NOT NULL DEFAULT 0,
     viewer_flags    INTEGER NOT NULL DEFAULT 0,
@@ -138,12 +139,28 @@ CREATE TABLE IF NOT EXISTS preferences (
 );
 CREATE INDEX IF NOT EXISTS idx_preferences_rev ON preferences(account_id, rev);
 CREATE INDEX IF NOT EXISTS idx_preferences_active ON preferences(account_id) WHERE deleted = 0;
+
+CREATE TABLE IF NOT EXISTS extension_stores (
+    account_id  INTEGER NOT NULL,
+    index_url   TEXT NOT NULL,
+    name        TEXT NOT NULL DEFAULT '',
+    badge_label TEXT NOT NULL DEFAULT '',
+    signing_key TEXT NOT NULL DEFAULT '',
+    rev         INTEGER NOT NULL,
+    deleted     INTEGER NOT NULL DEFAULT 0,
+    updated_at  INTEGER NOT NULL,
+    PRIMARY KEY (account_id, index_url)
+);
+CREATE INDEX IF NOT EXISTS idx_extension_stores_rev ON extension_stores(account_id, rev);
+CREATE INDEX IF NOT EXISTS idx_extension_stores_active ON extension_stores(account_id) WHERE deleted = 0;
 `
 
 func (s *Store) migrate() error {
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
+	// Best-effort column additions for schema evolution
+	_, _ = s.db.Exec("ALTER TABLE mangas ADD COLUMN thumbnail_url TEXT NOT NULL DEFAULT ''")
 	return nil
 }
 
@@ -152,7 +169,7 @@ func (s *Store) migrate() error {
 // can propagate.
 func (s *Store) GC(ctx context.Context, retention time.Duration) error {
 	cutoff := time.Now().Add(-retention).Unix()
-	tables := []string{"mangas", "categories", "manga_categories", "preferences"}
+	tables := []string{"mangas", "categories", "manga_categories", "preferences", "extension_stores"}
 	for _, t := range tables {
 		if _, err := s.db.ExecContext(ctx,
 			fmt.Sprintf("DELETE FROM %s WHERE deleted = 1 AND updated_at < ?", t), cutoff); err != nil {

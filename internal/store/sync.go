@@ -74,6 +74,11 @@ func (s *Store) ApplyChanges(
 			return 0, nil, err
 		}
 	}
+	for _, es := range cs.ExtensionStores {
+		if err := mergeExtensionStore(ctx, tx, accountID, rev, now, es); err != nil {
+			return 0, nil, err
+		}
+	}
 
 	// Changes pushed by other devices since the caller's watermark, excluding
 	// this batch (which all carries the new revision).
@@ -96,20 +101,20 @@ func mergeManga(ctx context.Context, tx *sql.Tx, accountID, rev, now int64, in M
 	}
 	var ex Manga
 	err := tx.QueryRowContext(ctx,
-		`SELECT title, favorite, chapter_flags, viewer_flags, update_strategy, notes,
+		`SELECT title, thumbnail_url, favorite, chapter_flags, viewer_flags, update_strategy, notes,
 		        date_added, client_version, deleted
 		 FROM mangas WHERE account_id = ? AND source_id = ? AND url = ?`,
 		accountID, in.SourceID, in.URL).
-		Scan(&ex.Title, &ex.Favorite, &ex.ChapterFlags, &ex.ViewerFlags, &ex.UpdateStrategy,
+		Scan(&ex.Title, &ex.ThumbnailURL, &ex.Favorite, &ex.ChapterFlags, &ex.ViewerFlags, &ex.UpdateStrategy,
 			&ex.Notes, &ex.DateAdded, &ex.ClientVersion, &ex.Deleted)
 
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		_, err = tx.ExecContext(ctx,
-			`INSERT INTO mangas(account_id, source_id, url, title, favorite, chapter_flags,
+			`INSERT INTO mangas(account_id, source_id, url, title, thumbnail_url, favorite, chapter_flags,
 			    viewer_flags, update_strategy, notes, date_added, client_version, rev, deleted, updated_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			accountID, in.SourceID, in.URL, in.Title, in.Favorite, in.ChapterFlags,
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			accountID, in.SourceID, in.URL, in.Title, in.ThumbnailURL, in.Favorite, in.ChapterFlags,
 			in.ViewerFlags, in.UpdateStrategy, in.Notes, in.DateAdded, in.ClientVersion,
 			rev, in.Deleted, now)
 		return err
@@ -120,6 +125,14 @@ func mergeManga(ctx context.Context, tx *sql.Tx, accountID, rev, now int64, in M
 	winner := in
 	if ex.ClientVersion > in.ClientVersion {
 		winner = ex
+	}
+	thumbnailURL := winner.ThumbnailURL
+	if thumbnailURL == "" {
+		if in.ThumbnailURL != "" {
+			thumbnailURL = in.ThumbnailURL
+		} else {
+			thumbnailURL = ex.ThumbnailURL
+		}
 	}
 	deleted := winner.Deleted
 	if winner.ClientVersion == ex.ClientVersion && ex.ClientVersion > in.ClientVersion {
@@ -133,6 +146,7 @@ func mergeManga(ctx context.Context, tx *sql.Tx, accountID, rev, now int64, in M
 		SourceID:       in.SourceID,
 		URL:            in.URL,
 		Title:          winner.Title,
+		ThumbnailURL:   thumbnailURL,
 		Favorite:       ex.Favorite || in.Favorite,
 		ChapterFlags:   winner.ChapterFlags,
 		ViewerFlags:    winner.ViewerFlags,
@@ -144,7 +158,7 @@ func mergeManga(ctx context.Context, tx *sql.Tx, accountID, rev, now int64, in M
 	}
 	// Skip no-op writes: bumping rev on an identical merge would echo the row
 	// back to other devices forever (client re-pushes what it just applied).
-	if merged.Title == ex.Title && merged.Favorite == ex.Favorite &&
+	if merged.Title == ex.Title && merged.ThumbnailURL == ex.ThumbnailURL && merged.Favorite == ex.Favorite &&
 		merged.ChapterFlags == ex.ChapterFlags && merged.ViewerFlags == ex.ViewerFlags &&
 		merged.UpdateStrategy == ex.UpdateStrategy && merged.Notes == ex.Notes &&
 		merged.DateAdded == ex.DateAdded && merged.ClientVersion == ex.ClientVersion &&
@@ -152,11 +166,11 @@ func mergeManga(ctx context.Context, tx *sql.Tx, accountID, rev, now int64, in M
 		return nil
 	}
 	_, err = tx.ExecContext(ctx,
-		`UPDATE mangas SET title = ?, favorite = ?, chapter_flags = ?, viewer_flags = ?,
+		`UPDATE mangas SET title = ?, thumbnail_url = ?, favorite = ?, chapter_flags = ?, viewer_flags = ?,
 		    update_strategy = ?, notes = ?, date_added = ?, client_version = ?, rev = ?,
 		    deleted = ?, updated_at = ?
 		 WHERE account_id = ? AND source_id = ? AND url = ?`,
-		merged.Title, merged.Favorite, merged.ChapterFlags, merged.ViewerFlags,
+		merged.Title, merged.ThumbnailURL, merged.Favorite, merged.ChapterFlags, merged.ViewerFlags,
 		merged.UpdateStrategy, merged.Notes, merged.DateAdded, merged.ClientVersion,
 		rev, merged.Deleted, now, accountID, in.SourceID, in.URL)
 	return err
@@ -264,6 +278,48 @@ func mergePreference(ctx context.Context, tx *sql.Tx, accountID, rev, now int64,
 	return err
 }
 
+func mergeExtensionStore(ctx context.Context, tx *sql.Tx, accountID, rev, now int64, in ExtensionStore) error {
+	var ex ExtensionStore
+	err := tx.QueryRowContext(ctx,
+		`SELECT name, badge_label, signing_key, deleted
+		 FROM extension_stores WHERE account_id = ? AND index_url = ?`,
+		accountID, in.IndexURL).
+		Scan(&ex.Name, &ex.BadgeLabel, &ex.SigningKey, &ex.Deleted)
+
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		_, err = tx.ExecContext(ctx,
+			`INSERT INTO extension_stores(account_id, index_url, name, badge_label, signing_key,
+			    rev, deleted, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			accountID, in.IndexURL, in.Name, in.BadgeLabel, in.SigningKey, rev, in.Deleted, now)
+		return err
+	case err != nil:
+		return fmt.Errorf("select extension_store: %w", err)
+	}
+
+	name := in.Name
+	badgeLabel := in.BadgeLabel
+	signingKey := in.SigningKey
+	if name == "" && signingKey == "" && ex.Name != "" {
+		name = ex.Name
+		badgeLabel = ex.BadgeLabel
+		signingKey = ex.SigningKey
+	}
+
+	if ex.Name == name && ex.BadgeLabel == badgeLabel &&
+		ex.SigningKey == signingKey && ex.Deleted == in.Deleted {
+		return nil
+	}
+
+	_, err = tx.ExecContext(ctx,
+		`UPDATE extension_stores SET name = ?, badge_label = ?, signing_key = ?, rev = ?,
+		    deleted = ?, updated_at = ?
+		 WHERE account_id = ? AND index_url = ?`,
+		name, badgeLabel, signingKey, rev, in.Deleted, now, accountID, in.IndexURL)
+	return err
+}
+
 // ChangesSince returns all rows with rev > since plus the account's current
 // revision (the high-water mark the client should store).
 func (s *Store) ChangesSince(ctx context.Context, accountID, since int64) (*ChangeSet, int64, error) {
@@ -296,7 +352,7 @@ func changesInRange(ctx context.Context, q queryer, accountID, since, before int
 	cs := &ChangeSet{}
 
 	rows, err := q.QueryContext(ctx,
-		`SELECT source_id, url, title, favorite, chapter_flags, viewer_flags, update_strategy,
+		`SELECT source_id, url, title, thumbnail_url, favorite, chapter_flags, viewer_flags, update_strategy,
 		        notes, date_added, client_version, rev, deleted
 		 FROM mangas WHERE account_id = ? AND `+revFilter, accountID, since, beforeClause)
 	if err != nil {
@@ -304,7 +360,7 @@ func changesInRange(ctx context.Context, q queryer, accountID, since, before int
 	}
 	for rows.Next() {
 		var m Manga
-		if err := rows.Scan(&m.SourceID, &m.URL, &m.Title, &m.Favorite, &m.ChapterFlags,
+		if err := rows.Scan(&m.SourceID, &m.URL, &m.Title, &m.ThumbnailURL, &m.Favorite, &m.ChapterFlags,
 			&m.ViewerFlags, &m.UpdateStrategy, &m.Notes, &m.DateAdded, &m.ClientVersion,
 			&m.Rev, &m.Deleted); err != nil {
 			rows.Close()
@@ -398,6 +454,22 @@ func changesInRange(ctx context.Context, q queryer, accountID, since, before int
 	}
 	rows.Close()
 
+	rows, err = q.QueryContext(ctx,
+		`SELECT index_url, name, badge_label, signing_key, rev, deleted
+		 FROM extension_stores WHERE account_id = ? AND `+revFilter, accountID, since, beforeClause)
+	if err != nil {
+		return nil, fmt.Errorf("pull extension_stores: %w", err)
+	}
+	for rows.Next() {
+		var es ExtensionStore
+		if err := rows.Scan(&es.IndexURL, &es.Name, &es.BadgeLabel, &es.SigningKey, &es.Rev, &es.Deleted); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		cs.ExtensionStores = append(cs.ExtensionStores, es)
+	}
+	rows.Close()
+
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
@@ -434,6 +506,7 @@ func (s *Store) Status(ctx context.Context, accountID int64) (*Status, error) {
 		{"SELECT COUNT(*) FROM categories WHERE account_id = ? AND deleted = 0", &st.CategoryCount},
 		{"SELECT COUNT(*) FROM history WHERE account_id = ?", &st.HistoryCount},
 		{"SELECT COUNT(*) FROM preferences WHERE account_id = ? AND deleted = 0", &st.PreferenceCount},
+		{"SELECT COUNT(*) FROM extension_stores WHERE account_id = ? AND deleted = 0", &st.ExtensionStoreCount},
 		{"SELECT COUNT(*) FROM devices WHERE account_id = ?", &st.DeviceCount},
 	}
 	for _, c := range counts {

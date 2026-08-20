@@ -13,6 +13,7 @@ type mangaDTO struct {
 	SourceID       int64  `json:"source_id"`
 	URL            string `json:"url"`
 	Title          string `json:"title"`
+	ThumbnailURL   string `json:"thumbnail_url,omitempty"`
 	Favorite       bool   `json:"favorite"`
 	ChapterFlags   int64  `json:"chapter_flags"`
 	ViewerFlags    int64  `json:"viewer_flags"`
@@ -62,13 +63,22 @@ type preferenceDTO struct {
 	Deleted bool            `json:"deleted"`
 }
 
+type extensionStoreDTO struct {
+	IndexURL   string `json:"index_url"`
+	Name       string `json:"name"`
+	BadgeLabel string `json:"badge_label"`
+	SigningKey string `json:"signing_key"`
+	Deleted    bool   `json:"deleted"`
+}
+
 type changeSetDTO struct {
-	Mangas          []mangaDTO         `json:"mangas,omitempty"`
-	Chapters        []chapterDTO       `json:"chapters,omitempty"`
-	Categories      []categoryDTO      `json:"categories,omitempty"`
-	MangaCategories []mangaCategoryDTO `json:"manga_categories,omitempty"`
-	History         []historyDTO       `json:"history,omitempty"`
-	Preferences     []preferenceDTO    `json:"preferences,omitempty"`
+	Mangas          []mangaDTO          `json:"mangas,omitempty"`
+	Chapters        []chapterDTO        `json:"chapters,omitempty"`
+	Categories      []categoryDTO       `json:"categories,omitempty"`
+	MangaCategories []mangaCategoryDTO  `json:"manga_categories,omitempty"`
+	History         []historyDTO        `json:"history,omitempty"`
+	Preferences     []preferenceDTO     `json:"preferences,omitempty"`
+	ExtensionStores []extensionStoreDTO `json:"extension_stores,omitempty"`
 }
 
 type pushRequest struct {
@@ -90,14 +100,15 @@ type pullResponse struct {
 }
 
 type statusResponse struct {
-	Rev              int64 `json:"rev"`
-	MangaCount       int64 `json:"manga_count"`
-	ChapterCount     int64 `json:"chapter_count"`
-	CategoryCount    int64 `json:"category_count"`
-	HistoryCount     int64 `json:"history_count"`
-	PreferenceCount  int64 `json:"preference_count"`
-	DeviceCount      int64 `json:"device_count"`
-	AccountCreatedAt int64 `json:"account_created_at"`
+	Rev                 int64 `json:"rev"`
+	MangaCount          int64 `json:"manga_count"`
+	ChapterCount        int64 `json:"chapter_count"`
+	CategoryCount       int64 `json:"category_count"`
+	HistoryCount        int64 `json:"history_count"`
+	PreferenceCount     int64 `json:"preference_count"`
+	ExtensionStoreCount int64 `json:"extension_store_count"`
+	DeviceCount         int64 `json:"device_count"`
+	AccountCreatedAt    int64 `json:"account_created_at"`
 }
 
 type serverInfoResponse struct {
@@ -122,8 +133,8 @@ func dtoToStore(cs *changeSetDTO) *store.ChangeSet {
 	out := &store.ChangeSet{}
 	for _, m := range cs.Mangas {
 		out.Mangas = append(out.Mangas, store.Manga{
-			SourceID: m.SourceID, URL: m.URL, Title: m.Title, Favorite: m.Favorite,
-			ChapterFlags: m.ChapterFlags, ViewerFlags: m.ViewerFlags,
+			SourceID: m.SourceID, URL: m.URL, Title: m.Title, ThumbnailURL: m.ThumbnailURL,
+			Favorite: m.Favorite, ChapterFlags: m.ChapterFlags, ViewerFlags: m.ViewerFlags,
 			UpdateStrategy: m.UpdateStrategy, Notes: m.Notes, DateAdded: m.DateAdded,
 			ClientVersion: m.ClientVersion, Deleted: m.Deleted,
 		})
@@ -157,6 +168,12 @@ func dtoToStore(cs *changeSetDTO) *store.ChangeSet {
 			Key: p.Key, Type: p.Type, Value: p.Value, Deleted: p.Deleted,
 		})
 	}
+	for _, es := range cs.ExtensionStores {
+		out.ExtensionStores = append(out.ExtensionStores, store.ExtensionStore{
+			IndexURL: es.IndexURL, Name: es.Name, BadgeLabel: es.BadgeLabel,
+			SigningKey: es.SigningKey, Deleted: es.Deleted,
+		})
+	}
 	return out
 }
 
@@ -164,8 +181,8 @@ func storeToDTO(cs *store.ChangeSet) changeSetDTO {
 	out := changeSetDTO{}
 	for _, m := range cs.Mangas {
 		out.Mangas = append(out.Mangas, mangaDTO{
-			SourceID: m.SourceID, URL: m.URL, Title: m.Title, Favorite: m.Favorite,
-			ChapterFlags: m.ChapterFlags, ViewerFlags: m.ViewerFlags,
+			SourceID: m.SourceID, URL: m.URL, Title: m.Title, ThumbnailURL: m.ThumbnailURL,
+			Favorite: m.Favorite, ChapterFlags: m.ChapterFlags, ViewerFlags: m.ViewerFlags,
 			UpdateStrategy: m.UpdateStrategy, Notes: m.Notes, DateAdded: m.DateAdded,
 			ClientVersion: m.ClientVersion, Deleted: m.Deleted,
 		})
@@ -197,6 +214,12 @@ func storeToDTO(cs *store.ChangeSet) changeSetDTO {
 	for _, p := range cs.Preferences {
 		out.Preferences = append(out.Preferences, preferenceDTO{
 			Key: p.Key, Type: p.Type, Value: p.Value, Deleted: p.Deleted,
+		})
+	}
+	for _, es := range cs.ExtensionStores {
+		out.ExtensionStores = append(out.ExtensionStores, extensionStoreDTO{
+			IndexURL: es.IndexURL, Name: es.Name, BadgeLabel: es.BadgeLabel,
+			SigningKey: es.SigningKey, Deleted: es.Deleted,
 		})
 	}
 	return out

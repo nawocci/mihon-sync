@@ -10,6 +10,7 @@ type Manga struct {
 	SourceID       int64
 	URL            string
 	Title          string
+	ThumbnailURL   string
 	Favorite       bool
 	ChapterFlags   int64
 	ViewerFlags    int64
@@ -57,6 +58,15 @@ type HistoryEntry struct {
 	Rev           int64
 }
 
+type ExtensionStore struct {
+	IndexURL   string
+	Name       string
+	BadgeLabel string
+	SigningKey string
+	Rev        int64
+	Deleted    bool
+}
+
 // Preference is a typed key/value pair. Value is JSON-encoded and
 // interpreted according to Type: "int", "long", "float", "string",
 // "boolean", "stringset".
@@ -77,11 +87,13 @@ type ChangeSet struct {
 	MangaCategories []MangaCategory
 	History         []HistoryEntry
 	Preferences     []Preference
+	ExtensionStores []ExtensionStore
 }
 
 func (cs *ChangeSet) Empty() bool {
 	return len(cs.Mangas) == 0 && len(cs.Chapters) == 0 && len(cs.Categories) == 0 &&
-		len(cs.MangaCategories) == 0 && len(cs.History) == 0 && len(cs.Preferences) == 0
+		len(cs.MangaCategories) == 0 && len(cs.History) == 0 && len(cs.Preferences) == 0 &&
+		len(cs.ExtensionStores) == 0
 }
 
 type Account struct {
@@ -93,12 +105,13 @@ type Account struct {
 }
 
 type Status struct {
-	Rev              int64
-	MangaCount       int64
-	ChapterCount     int64
-	CategoryCount    int64
-	HistoryCount     int64
-	PreferenceCount  int64
-	DeviceCount      int64
-	AccountCreatedAt int64
+	Rev                 int64
+	MangaCount          int64
+	ChapterCount        int64
+	CategoryCount       int64
+	HistoryCount        int64
+	PreferenceCount     int64
+	ExtensionStoreCount int64
+	DeviceCount         int64
+	AccountCreatedAt    int64
 }
