@@ -6,6 +6,7 @@
 //	mihon-sync genkey [-label NAME]     create an API key (shown once)
 //	mihon-sync revokekey KEY            delete an account and all its data
 //	mihon-sync listkeys                 list API key hashes and labels
+//	mihon-sync invite [-label NAME] [-ttl 15m]  mint one-time invite code
 package main
 
 import (
@@ -17,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -42,6 +44,12 @@ func main() {
 		err = cmdRevokekey(os.Args[2:])
 	case "listkeys":
 		err = cmdListkeys(os.Args[2:])
+	case "invite":
+		err = cmdInvite(os.Args[2:])
+	case "listinvites":
+		err = cmdListInvites(os.Args[2:])
+	case "revokeinvite":
+		err = cmdRevokeInvite(os.Args[2:])
 	default:
 		usage()
 		os.Exit(2)
@@ -60,13 +68,16 @@ commands:
   genkey [-label NAME]     create an API key (shown once)
   revokekey KEY            delete an account and all its synced data
   listkeys                 list API key hashes and labels
+  invite [-label NAME] [-ttl 15m]   mint one-time invite code (shown once)
+  listinvites              list pending invite codes (hash prefix only)
+  revokeinvite ID          delete unused invite code by ID
 
 environment:
   MIHON_SYNC_ADDR                listen address (default ":8080")
   MIHON_SYNC_DB                  SQLite database path (default "./mihon-sync.db")
   MIHON_SYNC_RETENTION_DAYS      tombstone retention in days (default 30)
   MIHON_SYNC_API_KEY             bootstrap API key, account created on serve start
-  MIHON_SYNC_ALLOW_REGISTRATION  allow web/API account registration (default true)
+  MIHON_SYNC_REGISTRATION        key generation mode: open (default), invite, closed
 `)
 }
 
@@ -224,5 +235,108 @@ func cmdListkeys(args []string) error {
 		fmt.Printf("%-10d %-20s %-12s %s\n",
 			a.ID, hashPrefix+"...", time.Unix(a.CreatedAt, 0).Format("2006-01-02"), a.Label)
 	}
+	return nil
+}
+
+const defaultInviteTTL = 15 * time.Minute
+const maxInviteTTL = 24 * time.Hour
+
+func cmdInvite(args []string) error {
+	fs := flag.NewFlagSet("invite", flag.ContinueOnError)
+	label := fs.String("label", "", "human-readable label for the invite")
+	ttl := fs.Duration("ttl", defaultInviteTTL, "invite code lifetime, e.g. 15m (max 24h)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *ttl <= 0 || *ttl > maxInviteTTL {
+		return errors.New("ttl must be between 1s and 24h")
+	}
+
+	cfg := config.FromEnv()
+	st, err := store.Open(cfg.DBPath)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	code, err := auth.GenerateInviteCode()
+	if err != nil {
+		return err
+	}
+	if err := st.CreateInviteToken(context.Background(), auth.HashKey(code), *label, time.Now().Add(*ttl).Unix()); err != nil {
+		return err
+	}
+
+	fmt.Println("Invite code created. Share it within the window — it burns on first successful use:")
+	fmt.Println()
+	fmt.Println("  " + code)
+	fmt.Printf("\nExpires in %s.\n", (*ttl).String())
+	return nil
+}
+
+func cmdListInvites(args []string) error {
+	fs := flag.NewFlagSet("listinvites", flag.ContinueOnError)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	cfg := config.FromEnv()
+	st, err := store.Open(cfg.DBPath)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	tokens, err := st.ListInviteTokens(context.Background())
+	if err != nil {
+		return err
+	}
+	if len(tokens) == 0 {
+		fmt.Println("no invite codes; create one with: mihon-sync invite")
+		return nil
+	}
+	now := time.Now().Unix()
+	fmt.Printf("%-6s %-10s %-16s %-10s %s\n", "ID", "STATUS", "EXPIRES", "CREATED", "LABEL")
+	for _, t := range tokens {
+		status := "pending"
+		if t.UsedAt.Valid {
+			status = "used"
+		} else if t.ExpiresAt <= now {
+			status = "expired"
+		}
+		hashPrefix := t.TokenHash
+		if len(hashPrefix) > 8 {
+			hashPrefix = hashPrefix[:8]
+		}
+		fmt.Printf("%-6d %-10s %-16s %-10s %s (hash %s...)\n",
+			t.ID, status, time.Unix(t.ExpiresAt, 0).Format("01-02 15:04"), time.Unix(t.CreatedAt, 0).Format("2006-01-02"), t.Label, hashPrefix)
+	}
+	return nil
+}
+
+func cmdRevokeInvite(args []string) error {
+	fs := flag.NewFlagSet("revokeinvite", flag.ContinueOnError)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return errors.New("usage: mihon-sync revokeinvite ID")
+	}
+	id, err := strconv.ParseInt(fs.Arg(0), 10, 64)
+	if err != nil || id <= 0 {
+		return errors.New("usage: mihon-sync revokeinvite ID")
+	}
+
+	cfg := config.FromEnv()
+	st, err := store.Open(cfg.DBPath)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	if err := st.DeleteInviteTokenByID(context.Background(), id); err != nil {
+		return err
+	}
+	fmt.Println("invite code revoked")
 	return nil
 }

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/nawocci/mihon-sync/internal/auth"
 	"github.com/nawocci/mihon-sync/internal/config"
@@ -172,8 +173,11 @@ func TestServerInfo(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &info); err != nil {
 		t.Fatal(err)
 	}
+	if info.Registration != config.RegistrationOpen {
+		t.Fatalf("want registration = open, got %q", info.Registration)
+	}
 	if !info.AllowRegistration {
-		t.Fatalf("want allow_registration = true")
+		t.Fatalf("want allow_registration = true for backward compatibility")
 	}
 }
 
@@ -209,10 +213,79 @@ func TestRegisterDisabled(t *testing.T) {
 	}
 	defer st.Close()
 
-	h := NewHandler(st, config.Config{AllowRegistration: false})
+	h := NewHandler(st, config.Config{Registration: config.RegistrationClosed})
 	w := doRequest(t, h, "POST", "/api/v1/auth/register", "", `{"label":"phone"}`)
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("register status = %d, want 403 when registration disabled", w.Code)
+	}
+}
+
+func setupInviteServer(t *testing.T) (http.Handler, *store.Store) {
+	t.Helper()
+	st, err := store.Open(t.TempDir() + "/test.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	return NewHandler(st, config.Config{Registration: config.RegistrationInvite}), st
+}
+
+func mintInvite(t *testing.T, st *store.Store, ttl time.Duration) string {
+	t.Helper()
+	code, err := auth.GenerateInviteCode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateInviteToken(context.Background(), auth.HashKey(code), "", time.Now().Add(ttl).Unix()); err != nil {
+		t.Fatal(err)
+	}
+	return code
+}
+
+func TestRegisterInviteHappyPath(t *testing.T) {
+	h, st := setupInviteServer(t)
+	code := mintInvite(t, st, 15*time.Minute)
+
+	w := doRequest(t, h, "POST", "/api/v1/auth/register", "", `{"label":"phone","invite_code":"`+code+`"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("register status = %d, want 201 (%s)", w.Code, w.Body)
+	}
+	var reg registerResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &reg); err != nil {
+		t.Fatal(err)
+	}
+	if w2 := doRequest(t, h, "GET", "/api/v1/auth/check", reg.APIKey, ""); w2.Code != http.StatusOK {
+		t.Fatalf("auth check with invite key failed: %d (%s)", w2.Code, w2.Body)
+	}
+}
+
+func TestRegisterInviteRejectsBadCode(t *testing.T) {
+	h, _ := setupInviteServer(t)
+	for _, body := range []string{`{"label":"phone"}`, `{"label":"phone","invite_code":"mhi_bogus"}`} {
+		if w := doRequest(t, h, "POST", "/api/v1/auth/register", "", body); w.Code != http.StatusForbidden {
+			t.Fatalf("register status = %d, want 403 (%s)", w.Code, w.Body)
+		}
+	}
+}
+
+func TestRegisterInviteSingleUse(t *testing.T) {
+	h, st := setupInviteServer(t)
+	code := mintInvite(t, st, 15*time.Minute)
+	body := `{"label":"phone","invite_code":"` + code + `"}`
+	if w := doRequest(t, h, "POST", "/api/v1/auth/register", "", body); w.Code != http.StatusCreated {
+		t.Fatalf("first register status = %d, want 201 (%s)", w.Code, w.Body)
+	}
+	if w := doRequest(t, h, "POST", "/api/v1/auth/register", "", body); w.Code != http.StatusForbidden {
+		t.Fatalf("second register status = %d, want 403 (%s)", w.Code, w.Body)
+	}
+}
+
+func TestRegisterInviteExpired(t *testing.T) {
+	h, st := setupInviteServer(t)
+	code := mintInvite(t, st, -time.Minute)
+	body := `{"label":"phone","invite_code":"` + code + `"}`
+	if w := doRequest(t, h, "POST", "/api/v1/auth/register", "", body); w.Code != http.StatusForbidden {
+		t.Fatalf("register status = %d, want 403 (%s)", w.Code, w.Body)
 	}
 }
 

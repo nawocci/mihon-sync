@@ -95,11 +95,15 @@
           <!-- Register Form -->
           <form id="registerForm" class="auth-form hidden">
             <div class="form-group">
+              <label for="regInviteCode">Invite Code</label>
+              <input type="password" id="regInviteCode" placeholder="mhi_..." autocomplete="off" spellcheck="false" class="font-mono">
+              <span class="input-hint">Ask the server operator for a one-time invite code.</span>
+            </div>
+            <div class="form-group">
               <label for="regLabel">Device / Account Label (Optional)</label>
               <input type="text" id="regLabel" placeholder="e.g. My Phone &amp; Tablet" maxlength="64">
               <span class="input-hint">A friendly label to identify this account key.</span>
             </div>
-
             <div id="registerError" class="alert-banner alert-error hidden"></div>
 
             <div id="regDisabledNotice" class="alert-banner alert-info hidden">

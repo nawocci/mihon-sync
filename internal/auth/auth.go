@@ -19,14 +19,27 @@ import (
 // KeyPrefix makes keys recognizable in config files and logs.
 const KeyPrefix = "mhk_"
 
+// InvitePrefix marks invite codes so users never confuse them with API keys.
+const InvitePrefix = "mhi_"
+
 // GenerateKey returns a new random API key. Only its SHA-256 hash is stored
 // server-side, so the plaintext key is shown to the user exactly once.
 func GenerateKey() (string, error) {
+	return generatePrefixed(KeyPrefix)
+}
+
+// GenerateInviteCode returns a new random single-use registration code.
+// Only its SHA-256 hash is stored server-side.
+func GenerateInviteCode() (string, error) {
+	return generatePrefixed(InvitePrefix)
+}
+
+func generatePrefixed(prefix string) (string, error) {
 	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {
 		return "", err
 	}
-	return KeyPrefix + base64.RawURLEncoding.EncodeToString(buf), nil
+	return prefix + base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
 func HashKey(key string) string {

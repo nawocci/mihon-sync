@@ -12,6 +12,9 @@ services:
       # `docker compose exec mihon-sync /mihon-sync genkey` instead.
       # MIHON_SYNC_API_KEY: "mhk_change_me"
       MIHON_SYNC_RETENTION_DAYS: "30"
+      # Public hosts: set to "invite" and mint one-time codes with
+      # `docker compose exec mihon-sync /mihon-sync invite`.
+      # MIHON_SYNC_REGISTRATION: "open"
 
 volumes:
   mihon-sync-data:

@@ -61,14 +61,22 @@ go build ./cmd/mihon-sync
 
 ## Configuration (environment variables)
 
-| Variable                      | Default             | Description                                   |
-| ----------------------------- | ------------------- | --------------------------------------------- |
-| `MIHON_SYNC_ADDR`             | `:8080`             | Listen address                                |
-| `MIHON_SYNC_DB`               | `./mihon-sync.db`   | SQLite database path                          |
-| `MIHON_SYNC_RETENTION_DAYS`   | `30`                | Tombstone retention before GC                 |
-| `MIHON_SYNC_API_KEY`          | —                   | Bootstrap key; account ensured on serve start |
-| `MIHON_SYNC_ALLOW_REGISTRATION`| `true`             | Allow creating API keys from Web UI / API     |
+| Variable                      | Default  | Description                                              |
+| ----------------------------- | -------- | -------------------------------------------------------- |
+| `MIHON_SYNC_ADDR`             | `:8080`  | Listen address                                           |
+| `MIHON_SYNC_DB`               | `./mihon-sync.db` | SQLite database path                             |
+| `MIHON_SYNC_RETENTION_DAYS`   | `30`     | Tombstone retention before GC                            |
+| `MIHON_SYNC_API_KEY`          | —        | Bootstrap key; account ensured on serve start            |
+| `MIHON_SYNC_REGISTRATION`     | `open`   | Key generation mode: `open`, `invite`, or `closed`       |
 
+Public hosts should set `MIHON_SYNC_REGISTRATION=invite`.
+Then mint one-time codes (default 15 minute window) with:
+
+```sh
+docker compose exec mihon-sync /mihon-sync invite -label "friend"
+```
+
+The legacy `MIHON_SYNC_ALLOW_REGISTRATION=false` still maps to `closed`.
 Put the server behind a reverse proxy with TLS (Caddy, nginx, Traefik…) if
 it is reachable from the internet — API keys are bearer credentials.
 
@@ -76,7 +84,7 @@ it is reachable from the internet — API keys are bearer credentials.
 
 `mihon-sync` includes a built-in, responsive web dashboard served at `/`:
 - **Statistics & Metrics**: Real-time overview of library manga, chapter read progress, categories, history, preferences, and connected devices.
-- **API Key & Auth**: Simple login with existing API key, or key generation (registration).
+- **API Key & Auth**: Simple login with existing API key, or key generation (registration). In `invite` mode, generation requires a one-time invite code from the operator.
 - **Quick Setup for Kioku**: 1-click copy for Server URL and API Key, setup instructions, and QR code view.
 - **Theme Support**: Dark, light, and system theme switching matching Kioku aesthetics.
 - **Account Actions**: Revoke API key and wipe synced data with confirmation.
@@ -92,6 +100,19 @@ mihon-sync revokekey mhk_...                # delete account + all its data
 When running in Docker: `docker compose exec mihon-sync /mihon-sync genkey`.
 Alternatively, generate an API key directly from the Web Dashboard.
 
+### Invites
+
+An invite code is single-use and expires (default 15 minutes, max 24 hours).
+It is only consumed when an account is successfully created; a failed
+attempt leaves it valid.
+
+```sh
+mihon-sync invite -label "friend" -ttl 15m   # mint one-time code (prints once)
+mihon-sync listinvites                       # status: pending / used / expired
+mihon-sync revokeinvite 3                    # delete an unused code by ID
+```
+
+Only the SHA-256 hash of a code is stored. `listinvites` never shows the code.
 ## HTTP API
 
 All endpoints except `/healthz`, `/api/v1/info`, `/api/v1/auth/register`, and `/` require `Authorization: Bearer <key>`.
@@ -101,7 +122,7 @@ All endpoints except `/healthz`, `/api/v1/info`, `/api/v1/auth/register`, and `/
 | `GET /`                         | Embedded Web Dashboard                         |
 | `GET /healthz`                  | Liveness probe                                 |
 | `GET /api/v1/info`              | Server capabilities & registration status      |
-| `POST /api/v1/auth/register`    | Generate new API key (if registration enabled)  |
+| `POST /api/v1/auth/register`    | Generate new API key; in `invite` mode requires `{"invite_code": "mhi_..."}` |
 | `GET /api/v1/auth/check`        | Validate the API key                           |
 | `DELETE /api/v1/auth/account`   | Revoke current key and delete account data     |
 | `POST /api/v1/sync/push`        | Push a batch of changes; returns new revision  |

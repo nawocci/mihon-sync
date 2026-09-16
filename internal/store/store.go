@@ -152,6 +152,15 @@ CREATE TABLE IF NOT EXISTS extension_stores (
 );
 CREATE INDEX IF NOT EXISTS idx_extension_stores_rev ON extension_stores(account_id, rev);
 CREATE INDEX IF NOT EXISTS idx_extension_stores_active ON extension_stores(account_id) WHERE deleted = 0;
+
+CREATE TABLE IF NOT EXISTS registration_tokens (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    token_hash TEXT NOT NULL UNIQUE,
+    label      TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    used_at    INTEGER
+);
 `
 
 func (s *Store) migrate() error {
@@ -173,6 +182,9 @@ func (s *Store) GC(ctx context.Context, retention time.Duration) error {
 			return fmt.Errorf("gc %s: %w", t, err)
 		}
 	}
+	if err := s.GCInviteTokens(ctx, time.Now().Unix()); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -189,4 +201,3 @@ func (s *Store) TouchDevice(ctx context.Context, accountID int64, deviceID strin
 		accountID, deviceID, now)
 	return err
 }
-

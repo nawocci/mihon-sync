@@ -10,7 +10,16 @@ const (
 	defaultAddr          = ":8080"
 	defaultDBPath        = "./mihon-sync.db"
 	defaultRetentionDays = 30
-	defaultAllowReg      = true
+)
+
+// Registration modes for POST /api/v1/auth/register.
+const (
+	// RegistrationOpen allows key generation with no invite code.
+	RegistrationOpen = "open"
+	// RegistrationInvite requires a valid single-use invite code.
+	RegistrationInvite = "invite"
+	// RegistrationClosed disables key generation.
+	RegistrationClosed = "closed"
 )
 
 type Config struct {
@@ -24,19 +33,35 @@ type Config struct {
 	// BootstrapKey, when set, ensures an account exists for this API key
 	// on server start. Convenient for first-run/Docker setups.
 	BootstrapKey string
-	// AllowRegistration controls whether web/API users can generate a new
-	// account/key via POST /api/v1/auth/register.
-	AllowRegistration bool
+	// Registration controls key generation via POST /api/v1/auth/register:
+	// "open" (default), "invite", or "closed".
+	Registration string
 }
 
 func FromEnv() Config {
 	return Config{
-		Addr:              envStr("MIHON_SYNC_ADDR", defaultAddr),
-		DBPath:            envStr("MIHON_SYNC_DB", defaultDBPath),
-		RetentionDays:     envInt("MIHON_SYNC_RETENTION_DAYS", defaultRetentionDays),
-		BootstrapKey:      os.Getenv("MIHON_SYNC_API_KEY"),
-		AllowRegistration: envBool("MIHON_SYNC_ALLOW_REGISTRATION", defaultAllowReg),
+		Addr:          envStr("MIHON_SYNC_ADDR", defaultAddr),
+		DBPath:        envStr("MIHON_SYNC_DB", defaultDBPath),
+		RetentionDays: envInt("MIHON_SYNC_RETENTION_DAYS", defaultRetentionDays),
+		BootstrapKey:  os.Getenv("MIHON_SYNC_API_KEY"),
+		Registration:  normalizeRegistration(os.Getenv("MIHON_SYNC_REGISTRATION"), os.Getenv("MIHON_SYNC_ALLOW_REGISTRATION")),
 	}
+}
+
+// normalizeRegistration resolves the registration mode. The new
+// MIHON_SYNC_REGISTRATION variable wins; the legacy boolean
+// MIHON_SYNC_ALLOW_REGISTRATION maps false to "closed" for compatibility.
+func normalizeRegistration(mode, legacyAllow string) string {
+	switch mode {
+	case RegistrationOpen, RegistrationInvite, RegistrationClosed:
+		return mode
+	}
+	if legacyAllow != "" {
+		if b, err := strconv.ParseBool(legacyAllow); err == nil && !b {
+			return RegistrationClosed
+		}
+	}
+	return RegistrationOpen
 }
 
 func envStr(key, fallback string) string {

@@ -112,11 +112,13 @@ type statusResponse struct {
 
 type serverInfoResponse struct {
 	AllowRegistration bool   `json:"allow_registration"`
+	Registration      string `json:"registration"`
 	Version           string `json:"version"`
 }
 
 type registerRequest struct {
-	Label string `json:"label"`
+	Label      string `json:"label"`
+	InviteCode string `json:"invite_code"`
 }
 
 type registerResponse struct {

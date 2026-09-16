@@ -10,7 +10,7 @@
 
   let currentApiKey = localStorage.getItem(STORAGE_KEY) || '';
   let currentTheme = localStorage.getItem(THEME_KEY) || 'system';
-  let serverInfo = { allow_registration: true, version: '0.1.0' };
+  let serverInfo = { allow_registration: true, registration: 'open', version: '0.1.0' };
   let isCheckingHealth = false;
 
   // DOM Elements
@@ -36,6 +36,7 @@
     loginSubmitBtn: document.getElementById('loginSubmitBtn'),
     loginError: document.getElementById('loginError'),
     regLabel: document.getElementById('regLabel'),
+    regInviteCode: document.getElementById('regInviteCode'),
     registerSubmitBtn: document.getElementById('registerSubmitBtn'),
     registerError: document.getElementById('registerError'),
     regDisabledNotice: document.getElementById('regDisabledNotice'),
@@ -159,10 +160,16 @@
       const infoRes = await fetch('/api/v1/info');
       if (infoRes.ok) {
         serverInfo = await infoRes.json();
-        if (!serverInfo.allow_registration) {
+        const mode = serverInfo.registration || (serverInfo.allow_registration ? 'open' : 'closed');
+        serverInfo.registration = mode;
+        if (mode === 'closed') {
           el.tabRegisterBtn.classList.add('hidden');
           el.registerSubmitBtn.disabled = true;
           el.regDisabledNotice.classList.remove('hidden');
+        }
+        const inviteGroup = el.regInviteCode ? el.regInviteCode.closest('.form-group') : null;
+        if (inviteGroup) {
+          inviteGroup.classList.toggle('hidden', mode !== 'invite');
         }
       }
     } catch (e) {
@@ -320,7 +327,11 @@
       el.registerForm.classList.remove('hidden');
       el.loginForm.classList.add('hidden');
       el.keyCreatedCard.classList.add('hidden');
-      el.regLabel.focus();
+      if (serverInfo.registration === 'invite' && el.regInviteCode) {
+        el.regInviteCode.focus();
+      } else {
+        el.regLabel.focus();
+      }
     }
   }
 
@@ -398,6 +409,12 @@
     el.registerForm.addEventListener('submit', async (e) => {
       e.preventDefault();
       const label = el.regLabel.value.trim();
+      const inviteCode = el.regInviteCode ? el.regInviteCode.value.trim() : '';
+      if (serverInfo.registration === 'invite' && !inviteCode) {
+        el.registerError.textContent = 'Enter the invite code from the server operator.';
+        el.registerError.classList.remove('hidden');
+        return;
+      }
 
       setBtnLoading(el.registerSubmitBtn, true);
       el.registerError.classList.add('hidden');
@@ -406,7 +423,7 @@
         const res = await fetch('/api/v1/auth/register', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ label })
+          body: JSON.stringify({ label, invite_code: inviteCode || undefined })
         });
 
         const data = await res.json();

@@ -3,9 +3,13 @@ package syncapi
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"strconv"
+	"sync"
+	"time"
 
 	"github.com/nawocci/mihon-sync/internal/auth"
 	"github.com/nawocci/mihon-sync/internal/config"
@@ -21,8 +25,9 @@ func NewHandler(st *store.Store, cfgs ...config.Config) http.Handler {
 	var cfg config.Config
 	if len(cfgs) > 0 {
 		cfg = cfgs[0]
-	} else {
-		cfg = config.Config{AllowRegistration: true}
+	}
+	if cfg.Registration == "" {
+		cfg.Registration = config.RegistrationOpen
 	}
 
 	mux := http.NewServeMux()
@@ -33,40 +38,19 @@ func NewHandler(st *store.Store, cfgs ...config.Config) http.Handler {
 
 	mux.HandleFunc("GET /api/v1/info", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, serverInfoResponse{
-			AllowRegistration: cfg.AllowRegistration,
+			AllowRegistration: cfg.Registration == config.RegistrationOpen,
+			Registration:      cfg.Registration,
 			Version:           "0.1.0",
 		})
 	})
 
+	limiter := newRegisterLimiter(10, time.Hour)
 	mux.HandleFunc("POST /api/v1/auth/register", func(w http.ResponseWriter, r *http.Request) {
-		if !cfg.AllowRegistration {
-			writeError(w, http.StatusForbidden, "registration is disabled on this server")
-			return
-		}
-		var req registerRequest
-		if r.Body != nil && r.ContentLength > 0 {
-			_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req)
-		}
-
-		key, err := auth.GenerateKey()
-		if err != nil {
-			slog.Error("generate key failed", "error", err)
-			writeError(w, http.StatusInternalServerError, "failed to generate API key")
-			return
-		}
-
-		if err := st.CreateAccount(r.Context(), auth.HashKey(key), req.Label); err != nil {
-			slog.Error("create account failed", "error", err)
-			writeError(w, http.StatusInternalServerError, "failed to create account")
-			return
-		}
-
-		slog.Info("new account registered via web/api", "label", req.Label)
-		writeJSON(w, http.StatusCreated, registerResponse{
-			APIKey: key,
-			Label:  req.Label,
-		})
+		handleRegister(w, r, st, cfg, limiter)
 	})
+
+	// handleRegister mints a new account/key. In invite mode the caller must
+	// present a valid single-use invite code alongside the optional label.
 
 	requireAuth := auth.Middleware(st, writeError)
 
@@ -103,6 +87,100 @@ func NewHandler(st *store.Store, cfgs ...config.Config) http.Handler {
 	mux.Handle("/", web.Handler())
 
 	return mux
+}
+
+func handleRegister(w http.ResponseWriter, r *http.Request, st *store.Store, cfg config.Config, limiter *registerLimiter) {
+	switch cfg.Registration {
+	case config.RegistrationOpen, config.RegistrationInvite, config.RegistrationClosed:
+	default:
+		writeError(w, http.StatusInternalServerError, "invalid registration mode")
+		return
+	}
+	if cfg.Registration == config.RegistrationClosed {
+		writeError(w, http.StatusForbidden, "registration is disabled on this server")
+		return
+	}
+	if !limiter.allow(clientIP(r)) {
+		writeError(w, http.StatusTooManyRequests, "too many registration attempts; try again later")
+		return
+	}
+	var req registerRequest
+	if r.Body != nil {
+		_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req)
+	}
+
+	key, err := auth.GenerateKey()
+	if err != nil {
+		slog.Error("generate key failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to generate API key")
+		return
+	}
+
+	if cfg.Registration == config.RegistrationInvite {
+		if req.InviteCode == "" {
+			writeError(w, http.StatusForbidden, "invalid or expired invite code")
+			return
+		}
+		if err := st.RegisterWithInvite(r.Context(), auth.HashKey(key), req.Label, auth.HashKey(req.InviteCode), time.Now().Unix()); err != nil {
+			if errors.Is(err, store.ErrInvalidInvite) {
+				writeError(w, http.StatusForbidden, "invalid or expired invite code")
+				return
+			}
+			slog.Error("invite registration failed", "error", err)
+			writeError(w, http.StatusInternalServerError, "failed to create account")
+			return
+		}
+	} else {
+		if err := st.CreateAccount(r.Context(), auth.HashKey(key), req.Label); err != nil {
+			slog.Error("create account failed", "error", err)
+			writeError(w, http.StatusInternalServerError, "failed to create account")
+			return
+		}
+	}
+
+	slog.Info("new account registered via web/api", "label", req.Label, "mode", cfg.Registration)
+	writeJSON(w, http.StatusCreated, registerResponse{
+		APIKey: key,
+		Label:  req.Label,
+	})
+}
+
+// registerLimiter bounds register attempts per client IP.
+type registerLimiter struct {
+	mu       sync.Mutex
+	attempts map[string][]time.Time
+	max      int
+	window   time.Duration
+}
+
+func newRegisterLimiter(max int, window time.Duration) *registerLimiter {
+	return &registerLimiter{attempts: make(map[string][]time.Time), max: max, window: window}
+}
+
+func (l *registerLimiter) allow(ip string) bool {
+	now := time.Now()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	cutoff := now.Add(-l.window)
+	recent := l.attempts[ip][:0]
+	for _, t := range l.attempts[ip] {
+		if t.After(cutoff) {
+			recent = append(recent, t)
+		}
+	}
+	if len(recent) >= l.max {
+		l.attempts[ip] = recent
+		return false
+	}
+	l.attempts[ip] = append(recent, now)
+	return true
+}
+
+func clientIP(r *http.Request) string {
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
+	}
+	return r.RemoteAddr
 }
 
 func extractDeviceID(r *http.Request) string {
