@@ -110,6 +110,46 @@ func TestMangaDeleteAndReadd(t *testing.T) {
 	}
 }
 
+// A favorite toggled off is sent as a tombstone at the same client_version.
+// The server must not persist the contradictory (favorite=true, deleted=true)
+// state, and a stale device re-pushing the favorite must not resurrect it.
+func TestMangaUnfavoriteDoesNotResurrect(t *testing.T) {
+	st, accID := openTestStore(t)
+	ctx := context.Background()
+
+	// Device A adds the manga as a favorite.
+	if _, _, err := st.ApplyChanges(ctx, accID, 0, "", &ChangeSet{Mangas: []Manga{{
+		SourceID: 1, URL: "/m/a", Title: "M", Favorite: true, ClientVersion: 1,
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Device A removes it from the library; the client sends a tombstone.
+	if _, _, err := st.ApplyChanges(ctx, accID, 0, "", &ChangeSet{Mangas: []Manga{{
+		SourceID: 1, URL: "/m/a", Favorite: false, ClientVersion: 1, Deleted: true,
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+
+	got := mangaAt(t, st, accID, "/m/a")
+	if !got.Deleted {
+		t.Fatal("removal did not stick")
+	}
+	if got.Favorite {
+		t.Fatal("tombstoned manga should not remain a favorite")
+	}
+
+	// A stale device (same client_version) re-pushes the favorite.
+	if _, _, err := st.ApplyChanges(ctx, accID, 0, "", &ChangeSet{Mangas: []Manga{{
+		SourceID: 1, URL: "/m/a", Title: "M", Favorite: true, ClientVersion: 1,
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	if !mangaAt(t, st, accID, "/m/a").Deleted {
+		t.Fatal("stale device resurrected a removed manga")
+	}
+}
+
 func TestChapterReadBookmarkORMerge(t *testing.T) {
 	st, accID := openTestStore(t)
 	ctx := context.Background()

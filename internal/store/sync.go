@@ -122,23 +122,31 @@ func mergeManga(ctx context.Context, tx *sql.Tx, accountID, rev, now int64, in M
 		return fmt.Errorf("select manga: %w", err)
 	}
 
+	// Higher client_version wins. On a tie, a deletion beats a non-deletion so a
+	// stale device cannot resurrect an entry another device removed.
+	inWins := in.ClientVersion > ex.ClientVersion ||
+		(in.ClientVersion == ex.ClientVersion && in.Deleted && !ex.Deleted)
 	winner := in
-	if ex.ClientVersion > in.ClientVersion {
+	if !inWins {
 		winner = ex
 	}
 	deleted := winner.Deleted
-	if winner.ClientVersion == ex.ClientVersion && ex.ClientVersion > in.ClientVersion {
-		// Existing won: a deletion still sticks unless the winner re-added.
-		deleted = ex.Deleted || in.Deleted
-	}
-	if in.Favorite && !in.Deleted {
+	// A strictly-newer re-add (favorited and not a tombstone) clears the tombstone.
+	if in.Favorite && !in.Deleted && in.ClientVersion > ex.ClientVersion {
 		deleted = false
+	}
+	favorite := ex.Favorite || in.Favorite
+	if deleted {
+		// A removed entry is never in the library; otherwise a tombstone would
+		// persist as the contradictory (favorite=true, deleted=true) state, which
+		// lets a stale device flip it back to alive.
+		favorite = false
 	}
 	merged := Manga{
 		SourceID:       in.SourceID,
 		URL:            in.URL,
 		Title:          winner.Title,
-		Favorite:       ex.Favorite || in.Favorite,
+		Favorite:       favorite,
 		ChapterFlags:   winner.ChapterFlags,
 		ViewerFlags:    winner.ViewerFlags,
 		UpdateStrategy: winner.UpdateStrategy,
