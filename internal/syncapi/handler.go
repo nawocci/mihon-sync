@@ -255,14 +255,15 @@ func handleStatus(w http.ResponseWriter, r *http.Request, st *store.Store) {
 		return
 	}
 	writeJSON(w, http.StatusOK, statusResponse{
-		Rev:              status.Rev,
-		MangaCount:       status.MangaCount,
-		ChapterCount:     status.ChapterCount,
-		CategoryCount:    status.CategoryCount,
-		HistoryCount:     status.HistoryCount,
-		PreferenceCount:  status.PreferenceCount,
-		DeviceCount:      status.DeviceCount,
-		AccountCreatedAt: status.AccountCreatedAt,
+		Rev:                 status.Rev,
+		MangaCount:          status.MangaCount,
+		ChapterCount:        status.ChapterCount,
+		CategoryCount:       status.CategoryCount,
+		HistoryCount:        status.HistoryCount,
+		PreferenceCount:     status.PreferenceCount,
+		ExtensionStoreCount: status.ExtensionStoreCount,
+		DeviceCount:         status.DeviceCount,
+		AccountCreatedAt:    status.AccountCreatedAt,
 	})
 }
 

@@ -148,7 +148,7 @@ func TestPullRequiresSince(t *testing.T) {
 func TestStatus(t *testing.T) {
 	h, key := setupTestServer(t)
 
-	body := `{"changes":{"mangas":[{"source_id":7,"url":"/m/one","client_version":1},{"source_id":7,"url":"/m/two","client_version":1}],"chapters":[{"manga_source_id":7,"manga_url":"/m/one","url":"/c/1"}]}}`
+	body := `{"changes":{"mangas":[{"source_id":7,"url":"/m/one","client_version":1},{"source_id":7,"url":"/m/two","client_version":1}],"chapters":[{"manga_source_id":7,"manga_url":"/m/one","url":"/c/1"}],"extension_stores":[{"index_url":"https://x/repo.json","name":"X"}]}}`
 	if w := doRequest(t, h, "POST", "/api/v1/sync/push", key, body); w.Code != http.StatusOK {
 		t.Fatalf("push: %s", w.Body)
 	}
@@ -160,6 +160,10 @@ func TestStatus(t *testing.T) {
 	}
 	if st.MangaCount != 2 || st.ChapterCount != 1 || st.Rev != 1 {
 		t.Fatalf("unexpected status: %s", w.Body)
+	}
+	// Regression: the handler used to drop ExtensionStoreCount from the response.
+	if st.ExtensionStoreCount != 1 {
+		t.Fatalf("expected 1 extension store in status, got %d: %s", st.ExtensionStoreCount, w.Body)
 	}
 }
 
