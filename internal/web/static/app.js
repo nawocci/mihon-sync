@@ -61,6 +61,7 @@
     statCategories: document.getElementById('statCategories'),
     statHistory: document.getElementById('statHistory'),
     statPreferences: document.getElementById('statPreferences'),
+    statExtensionStores: document.getElementById('statExtensionStores'),
     statDevices: document.getElementById('statDevices'),
 
     // Setup Helpers
@@ -251,6 +252,7 @@
     animateValue(el.statCategories, data.category_count ?? 0);
     animateValue(el.statHistory, data.history_count ?? 0);
     animateValue(el.statPreferences, data.preference_count ?? 0);
+    animateValue(el.statExtensionStores, data.extension_store_count ?? 0);
     animateValue(el.statDevices, data.device_count ?? 0);
 
     // Setup helper fields

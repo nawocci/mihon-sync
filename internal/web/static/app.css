@@ -802,6 +802,7 @@ input[type="password"]:focus {
 .icon-history { background-color: rgba(16, 185, 129, 0.1); color: #10b981; }
 .icon-preferences { background-color: rgba(14, 165, 233, 0.1); color: #0ea5e9; }
 .icon-devices { background-color: rgba(99, 102, 241, 0.1); color: #6366f1; }
+.icon-extension-stores { background-color: rgba(20, 184, 166, 0.1); color: #14b8a6; }
 
 [data-theme="dark"] .icon-manga { color: #fb7185; background-color: rgba(251, 113, 133, 0.12); }
 [data-theme="dark"] .icon-chapters { color: #a78bfa; background-color: rgba(167, 139, 250, 0.12); }
@@ -809,6 +810,7 @@ input[type="password"]:focus {
 [data-theme="dark"] .icon-history { color: #34d399; background-color: rgba(52, 211, 153, 0.12); }
 [data-theme="dark"] .icon-preferences { color: #38bdf8; background-color: rgba(56, 189, 248, 0.12); }
 [data-theme="dark"] .icon-devices { color: #818cf8; background-color: rgba(129, 140, 248, 0.12); }
+[data-theme="dark"] .icon-extension-stores { color: #2dd4bf; background-color: rgba(45, 212, 191, 0.12); }
 
 .stat-content {
   display: flex;
