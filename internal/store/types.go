@@ -28,6 +28,8 @@ type Chapter struct {
 	Read          bool
 	Bookmark      bool
 	LastPageRead  int64
+	DateFetch     int64
+	DateUpload    int64
 	ClientVersion int64
 	Rev           int64
 }

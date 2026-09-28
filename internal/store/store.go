@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -80,6 +81,8 @@ CREATE TABLE IF NOT EXISTS chapters (
     read            INTEGER NOT NULL DEFAULT 0,
     bookmark        INTEGER NOT NULL DEFAULT 0,
     last_page_read  INTEGER NOT NULL DEFAULT 0,
+    date_fetch      INTEGER NOT NULL DEFAULT 0,
+    date_upload     INTEGER NOT NULL DEFAULT 0,
     client_version  INTEGER NOT NULL DEFAULT 0,
     rev             INTEGER NOT NULL,
     updated_at      INTEGER NOT NULL,
@@ -166,6 +169,19 @@ CREATE TABLE IF NOT EXISTS registration_tokens (
 func (s *Store) migrate() error {
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("migrate: %w", err)
+	}
+	// Existing databases predate the Updates-page date columns; add them if missing.
+	for _, stmt := range []string{
+		`ALTER TABLE chapters ADD COLUMN date_fetch INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE chapters ADD COLUMN date_upload INTEGER NOT NULL DEFAULT 0`,
+	} {
+		if _, err := s.db.Exec(stmt); err != nil {
+			// Ignore "duplicate column" on re-run; surface anything else.
+			msg := err.Error()
+			if !(strings.Contains(msg, "duplicate column") || strings.Contains(msg, "already exists")) {
+				return fmt.Errorf("migrate chapters dates: %w", err)
+			}
+		}
 	}
 	return nil
 }

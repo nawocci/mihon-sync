@@ -187,6 +187,51 @@ func TestChapterReadBookmarkORMerge(t *testing.T) {
 	}
 }
 
+func TestChapterDateEarliestWins(t *testing.T) {
+	st, accID := openTestStore(t)
+	ctx := context.Background()
+
+	push := func(fetch, upload int64) {
+		_, _, err := st.ApplyChanges(ctx, accID, 0, "", &ChangeSet{Chapters: []Chapter{{
+			MangaSourceID: 1, MangaURL: "/m/a", URL: "/c/1",
+			DateFetch: fetch, DateUpload: upload,
+		}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	push(2000, 2000)
+	// Fresh device bulk-fetch stamps now-dates; they must not overwrite originals.
+	push(5000, 5000)
+
+	cs, _, err := st.ChangesSince(ctx, accID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cs.Chapters) != 1 {
+		t.Fatalf("expected 1 chapter, got %d", len(cs.Chapters))
+	}
+	c := cs.Chapters[0]
+	if c.DateFetch != 2000 || c.DateUpload != 2000 {
+		t.Fatalf("earliest dates lost: got fetch=%d upload=%d", c.DateFetch, c.DateUpload)
+	}
+
+	// Unknown (0) from old clients never overwrites.
+	push(0, 0)
+	cs, _, _ = st.ChangesSince(ctx, accID, 0)
+	if cs.Chapters[0].DateFetch != 2000 || cs.Chapters[0].DateUpload != 2000 {
+		t.Fatalf("zero dates overwrote known dates: %+v", cs.Chapters[0])
+	}
+
+	// An earlier date discovered later still wins.
+	push(1000, 1500)
+	cs, _, _ = st.ChangesSince(ctx, accID, 0)
+	if cs.Chapters[0].DateFetch != 1000 || cs.Chapters[0].DateUpload != 1500 {
+		t.Fatalf("earlier date did not win: %+v", cs.Chapters[0])
+	}
+}
+
 func TestHistoryMaxMerge(t *testing.T) {
 	st, accID := openTestStore(t)
 	ctx := context.Background()

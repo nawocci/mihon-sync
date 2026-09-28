@@ -114,6 +114,32 @@ func TestPushPullRoundTrip(t *testing.T) {
 	}
 }
 
+func TestPushPullChapterDatesRoundTrip(t *testing.T) {
+	h, key := setupTestServer(t)
+
+	body := `{"device_id":"dev-a","changes":{"chapters":[{"manga_source_id":7,"manga_url":"/m/one","url":"/c/1","date_fetch":1700000000001,"date_upload":1700000000002}]}}`
+	w := doRequest(t, h, "POST", "/api/v1/sync/push", key, body)
+	if w.Code != http.StatusOK {
+		t.Fatalf("push status = %d (%s)", w.Code, w.Body)
+	}
+
+	w = doRequest(t, h, "GET", "/api/v1/sync/pull?since=0", key, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("pull status = %d", w.Code)
+	}
+	var pull pullResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &pull); err != nil {
+		t.Fatal(err)
+	}
+	if len(pull.Changes.Chapters) != 1 {
+		t.Fatalf("expected 1 chapter, got %s", w.Body)
+	}
+	c := pull.Changes.Chapters[0]
+	if c.DateFetch != 1700000000001 || c.DateUpload != 1700000000002 {
+		t.Fatalf("dates did not round-trip: %+v", c)
+	}
+}
+
 func TestPushValidation(t *testing.T) {
 	h, key := setupTestServer(t)
 

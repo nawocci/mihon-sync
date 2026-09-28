@@ -178,20 +178,20 @@ func mergeManga(ctx context.Context, tx *sql.Tx, accountID, rev, now int64, in M
 func mergeChapter(ctx context.Context, tx *sql.Tx, accountID, rev, now int64, in Chapter) error {
 	var ex Chapter
 	err := tx.QueryRowContext(ctx,
-		`SELECT read, bookmark, last_page_read, client_version
+		`SELECT read, bookmark, last_page_read, date_fetch, date_upload, client_version
 		 FROM chapters
 		 WHERE account_id = ? AND manga_source_id = ? AND manga_url = ? AND url = ?`,
 		accountID, in.MangaSourceID, in.MangaURL, in.URL).
-		Scan(&ex.Read, &ex.Bookmark, &ex.LastPageRead, &ex.ClientVersion)
+		Scan(&ex.Read, &ex.Bookmark, &ex.LastPageRead, &ex.DateFetch, &ex.DateUpload, &ex.ClientVersion)
 
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		_, err = tx.ExecContext(ctx,
 			`INSERT INTO chapters(account_id, manga_source_id, manga_url, url, read, bookmark,
-			    last_page_read, client_version, rev, updated_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			    last_page_read, date_fetch, date_upload, client_version, rev, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			accountID, in.MangaSourceID, in.MangaURL, in.URL, in.Read, in.Bookmark,
-			in.LastPageRead, in.ClientVersion, rev, now)
+			in.LastPageRead, in.DateFetch, in.DateUpload, in.ClientVersion, rev, now)
 		return err
 	case err != nil:
 		return fmt.Errorf("select chapter: %w", err)
@@ -207,18 +207,36 @@ func mergeChapter(ctx context.Context, tx *sql.Tx, accountID, rev, now int64, in
 	read := ex.Read || in.Read
 	bookmark := ex.Bookmark || in.Bookmark
 	version := max(ex.ClientVersion, in.ClientVersion)
+	// Updates-page dates: earliest known wins; 0 means unknown (old client) and
+	// never overwrites. Lets a fresh device's bulk-fetch now-dates converge back
+	// to the originals so its Updates list matches the old device.
+	dateFetch := minNonZero(ex.DateFetch, in.DateFetch)
+	dateUpload := minNonZero(ex.DateUpload, in.DateUpload)
 	// Skip no-op writes so applied changes don't echo back to other devices.
 	if read == ex.Read && bookmark == ex.Bookmark && page == ex.LastPageRead &&
+		dateFetch == ex.DateFetch && dateUpload == ex.DateUpload &&
 		version == ex.ClientVersion {
 		return nil
 	}
 	_, err = tx.ExecContext(ctx,
-		`UPDATE chapters SET read = ?, bookmark = ?, last_page_read = ?, client_version = ?,
+		`UPDATE chapters SET read = ?, bookmark = ?, last_page_read = ?, date_fetch = ?,
+		    date_upload = ?, client_version = ?,
 		    rev = ?, updated_at = ?
 		 WHERE account_id = ? AND manga_source_id = ? AND manga_url = ? AND url = ?`,
-		read, bookmark, page, version, rev, now,
+		read, bookmark, page, dateFetch, dateUpload, version, rev, now,
 		accountID, in.MangaSourceID, in.MangaURL, in.URL)
 	return err
+}
+
+func minNonZero(a, b int64) int64 {
+	switch {
+	case a <= 0:
+		return b
+	case b <= 0:
+		return a
+	default:
+		return min(a, b)
+	}
 }
 
 func mergeCategory(ctx context.Context, tx *sql.Tx, accountID, rev, now int64, in Category) error {
@@ -370,7 +388,8 @@ func changesInRange(ctx context.Context, q queryer, accountID, since, before int
 	rows.Close()
 
 	rows, err = q.QueryContext(ctx,
-		`SELECT manga_source_id, manga_url, url, read, bookmark, last_page_read, client_version, rev
+		`SELECT manga_source_id, manga_url, url, read, bookmark, last_page_read,
+		        date_fetch, date_upload, client_version, rev
 		 FROM chapters WHERE account_id = ? AND `+revFilter, accountID, since, beforeClause)
 	if err != nil {
 		return nil, fmt.Errorf("pull chapters: %w", err)
@@ -378,7 +397,7 @@ func changesInRange(ctx context.Context, q queryer, accountID, since, before int
 	for rows.Next() {
 		var c Chapter
 		if err := rows.Scan(&c.MangaSourceID, &c.MangaURL, &c.URL, &c.Read, &c.Bookmark,
-			&c.LastPageRead, &c.ClientVersion, &c.Rev); err != nil {
+			&c.LastPageRead, &c.DateFetch, &c.DateUpload, &c.ClientVersion, &c.Rev); err != nil {
 			rows.Close()
 			return nil, err
 		}

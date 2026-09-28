@@ -30,6 +30,8 @@ type chapterDTO struct {
 	Read          bool   `json:"read"`
 	Bookmark      bool   `json:"bookmark"`
 	LastPageRead  int64  `json:"last_page_read"`
+	DateFetch     int64  `json:"date_fetch"`
+	DateUpload    int64  `json:"date_upload"`
 	ClientVersion int64  `json:"client_version"`
 }
 
@@ -144,6 +146,7 @@ func dtoToStore(cs *changeSetDTO) *store.ChangeSet {
 		out.Chapters = append(out.Chapters, store.Chapter{
 			MangaSourceID: c.MangaSourceID, MangaURL: c.MangaURL, URL: c.URL,
 			Read: c.Read, Bookmark: c.Bookmark, LastPageRead: c.LastPageRead,
+			DateFetch: c.DateFetch, DateUpload: c.DateUpload,
 			ClientVersion: c.ClientVersion,
 		})
 	}
@@ -192,6 +195,7 @@ func storeToDTO(cs *store.ChangeSet) changeSetDTO {
 		out.Chapters = append(out.Chapters, chapterDTO{
 			MangaSourceID: c.MangaSourceID, MangaURL: c.MangaURL, URL: c.URL,
 			Read: c.Read, Bookmark: c.Bookmark, LastPageRead: c.LastPageRead,
+			DateFetch: c.DateFetch, DateUpload: c.DateUpload,
 			ClientVersion: c.ClientVersion,
 		})
 	}
