@@ -28,11 +28,10 @@ func openTestStore(t *testing.T) (*Store, int64) {
 
 func mangaAt(t *testing.T, st *Store, accountID int64, url string) Manga {
 	t.Helper()
-	cs, rev, err := st.ChangesSince(context.Background(), accountID, 0)
+	cs, _, err := st.ChangesSince(context.Background(), accountID, 0)
 	if err != nil {
 		t.Fatalf("changes since: %v", err)
 	}
-	_ = rev
 	for _, m := range cs.Mangas {
 		if m.URL == url {
 			return m
@@ -48,7 +47,7 @@ func TestMangaVersionWins(t *testing.T) {
 
 	push := func(title string, version int64) {
 		_, _, err := st.ApplyChanges(ctx, accID, 0, "", &ChangeSet{Mangas: []Manga{{
-			SourceID: 1, URL: "/m/a", Title: title, ClientVersion: version,
+			SourceID: 1, URL: "/m/a", Title: title, SyncVersion: version,
 		}}})
 		if err != nil {
 			t.Fatalf("apply: %v", err)
@@ -71,18 +70,23 @@ func TestMangaFavoriteORMerge(t *testing.T) {
 	ctx := context.Background()
 
 	if _, _, err := st.ApplyChanges(ctx, accID, 0, "", &ChangeSet{Mangas: []Manga{{
-		SourceID: 1, URL: "/m/a", Favorite: true, ClientVersion: 5,
+		SourceID: 1, URL: "/m/a", Favorite: true, FavoriteAt: 1000, SyncVersion: 5,
 	}}}); err != nil {
 		t.Fatal(err)
 	}
 	// A newer version without favorite must not unset it.
 	if _, _, err := st.ApplyChanges(ctx, accID, 0, "", &ChangeSet{Mangas: []Manga{{
-		SourceID: 1, URL: "/m/a", Favorite: false, ClientVersion: 9,
+		SourceID: 1, URL: "/m/a", Favorite: false, FavoriteAt: 500, SyncVersion: 9,
 	}}}); err != nil {
 		t.Fatal(err)
 	}
-	if got := mangaAt(t, st, accID, "/m/a").Favorite; !got {
+	got := mangaAt(t, st, accID, "/m/a")
+	if !got.Favorite {
 		t.Fatal("favorite was lost in merge")
+	}
+	// favorite_at takes the earliest known value, matching backup restore.
+	if got.FavoriteAt != 500 {
+		t.Fatalf("favorite_at = %d, want earliest 500", got.FavoriteAt)
 	}
 }
 
@@ -92,7 +96,7 @@ func TestMangaDeleteAndReadd(t *testing.T) {
 
 	apply := func(version int64, deleted bool) {
 		_, _, err := st.ApplyChanges(ctx, accID, 0, "", &ChangeSet{Mangas: []Manga{{
-			SourceID: 1, URL: "/m/a", ClientVersion: version, Deleted: deleted,
+			SourceID: 1, URL: "/m/a", SyncVersion: version, Deleted: deleted,
 		}}})
 		if err != nil {
 			t.Fatal(err)
@@ -110,7 +114,7 @@ func TestMangaDeleteAndReadd(t *testing.T) {
 	}
 }
 
-// A favorite toggled off is sent as a tombstone at the same client_version.
+// A favorite toggled off is sent as a tombstone at the same sync_version.
 // The server must not persist the contradictory (favorite=true, deleted=true)
 // state, and a stale device re-pushing the favorite must not resurrect it.
 func TestMangaUnfavoriteDoesNotResurrect(t *testing.T) {
@@ -119,14 +123,14 @@ func TestMangaUnfavoriteDoesNotResurrect(t *testing.T) {
 
 	// Device A adds the manga as a favorite.
 	if _, _, err := st.ApplyChanges(ctx, accID, 0, "", &ChangeSet{Mangas: []Manga{{
-		SourceID: 1, URL: "/m/a", Title: "M", Favorite: true, ClientVersion: 1,
+		SourceID: 1, URL: "/m/a", Title: "M", Favorite: true, FavoriteAt: 1000, SyncVersion: 1,
 	}}}); err != nil {
 		t.Fatal(err)
 	}
 
 	// Device A removes it from the library; the client sends a tombstone.
 	if _, _, err := st.ApplyChanges(ctx, accID, 0, "", &ChangeSet{Mangas: []Manga{{
-		SourceID: 1, URL: "/m/a", Favorite: false, ClientVersion: 1, Deleted: true,
+		SourceID: 1, URL: "/m/a", Favorite: false, SyncVersion: 1, Deleted: true,
 	}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -138,10 +142,13 @@ func TestMangaUnfavoriteDoesNotResurrect(t *testing.T) {
 	if got.Favorite {
 		t.Fatal("tombstoned manga should not remain a favorite")
 	}
+	if got.FavoriteAt != 0 {
+		t.Fatalf("tombstoned manga should have no favorite_at, got %d", got.FavoriteAt)
+	}
 
-	// A stale device (same client_version) re-pushes the favorite.
+	// A stale device (same sync_version) re-pushes the favorite.
 	if _, _, err := st.ApplyChanges(ctx, accID, 0, "", &ChangeSet{Mangas: []Manga{{
-		SourceID: 1, URL: "/m/a", Title: "M", Favorite: true, ClientVersion: 1,
+		SourceID: 1, URL: "/m/a", Title: "M", Favorite: true, SyncVersion: 1,
 	}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +164,7 @@ func TestChapterReadBookmarkORMerge(t *testing.T) {
 	push := func(read, bookmark bool, page, version int64) {
 		_, _, err := st.ApplyChanges(ctx, accID, 0, "", &ChangeSet{Chapters: []Chapter{{
 			MangaSourceID: 1, MangaURL: "/m/a", URL: "/c/1",
-			Read: read, Bookmark: bookmark, LastPageRead: page, ClientVersion: version,
+			Read: read, Bookmark: bookmark, LastPageRead: page, SyncVersion: version,
 		}}})
 		if err != nil {
 			t.Fatal(err)
@@ -236,10 +243,10 @@ func TestHistoryMaxMerge(t *testing.T) {
 	st, accID := openTestStore(t)
 	ctx := context.Background()
 
-	push := func(lastRead, duration int64) {
+	push := func(readAt, duration int64) {
 		_, _, err := st.ApplyChanges(ctx, accID, 0, "", &ChangeSet{History: []HistoryEntry{{
 			MangaSourceID: 1, MangaURL: "/m/a", ChapterURL: "/c/1",
-			LastRead: lastRead, ReadDuration: duration,
+			ReadAt: readAt, ReadDuration: duration,
 		}}})
 		if err != nil {
 			t.Fatal(err)
@@ -254,8 +261,8 @@ func TestHistoryMaxMerge(t *testing.T) {
 		t.Fatalf("expected 1 history row, got %d", len(cs.History))
 	}
 	h := cs.History[0]
-	if h.LastRead != 1000 {
-		t.Fatalf("last_read = %d, want max 1000", h.LastRead)
+	if h.ReadAt != 1000 {
+		t.Fatalf("read_at = %d, want max 1000", h.ReadAt)
 	}
 	if h.ReadDuration != 90 {
 		t.Fatalf("read_duration = %d, want max 90", h.ReadDuration)
@@ -285,6 +292,81 @@ func TestCategoryAndPreferenceTombstones(t *testing.T) {
 	}
 	if len(cs.Preferences) != 1 || !cs.Preferences[0].Deleted {
 		t.Fatal("preference tombstone missing")
+	}
+}
+
+func TestExcludedScanlatorMembershipAndTombstone(t *testing.T) {
+	st, accID := openTestStore(t)
+	ctx := context.Background()
+
+	if _, _, err := st.ApplyChanges(ctx, accID, 0, "", &ChangeSet{
+		ExcludedScanlators: []ExcludedScanlator{
+			{MangaSourceID: 1, MangaURL: "/m/a", Scanlator: "Group A"},
+			{MangaSourceID: 1, MangaURL: "/m/a", Scanlator: "Group B"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	cs, _, _ := st.ChangesSince(ctx, accID, 0)
+	if len(cs.ExcludedScanlators) != 2 {
+		t.Fatalf("expected 2 excluded scanlators, got %d", len(cs.ExcludedScanlators))
+	}
+
+	status, _ := st.Status(ctx, accID)
+	if status.ExcludedScanlatorCount != 2 {
+		t.Fatalf("status count = %d, want 2", status.ExcludedScanlatorCount)
+	}
+
+	if _, _, err := st.ApplyChanges(ctx, accID, 0, "", &ChangeSet{
+		ExcludedScanlators: []ExcludedScanlator{
+			{MangaSourceID: 1, MangaURL: "/m/a", Scanlator: "Group A", Deleted: true},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	status, _ = st.Status(ctx, accID)
+	if status.ExcludedScanlatorCount != 1 {
+		t.Fatalf("active count = %d, want 1 after tombstone", status.ExcludedScanlatorCount)
+	}
+	cs, _, _ = st.ChangesSince(ctx, accID, 0)
+	var deleted int
+	for _, es := range cs.ExcludedScanlators {
+		if es.Scanlator == "Group A" && es.Deleted {
+			deleted++
+		}
+	}
+	if deleted != 1 {
+		t.Fatal("excluded scanlator tombstone missing")
+	}
+}
+
+func TestMemoMergeShallowUnion(t *testing.T) {
+	st, accID := openTestStore(t)
+	ctx := context.Background()
+
+	if _, _, err := st.ApplyChanges(ctx, accID, 0, "", &ChangeSet{Mangas: []Manga{{
+		SourceID: 1, URL: "/m/a", SyncVersion: 1,
+		Memo: json.RawMessage(`{"a":1,"b":2}`),
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	// A later version adds a key and overrides another; both survive.
+	if _, _, err := st.ApplyChanges(ctx, accID, 0, "", &ChangeSet{Mangas: []Manga{{
+		SourceID: 1, URL: "/m/a", SyncVersion: 2,
+		Memo: json.RawMessage(`{"b":9,"c":3}`),
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+
+	got := mangaAt(t, st, accID, "/m/a")
+	var memo map[string]int
+	if err := json.Unmarshal(got.Memo, &memo); err != nil {
+		t.Fatalf("memo is not an object: %v (%s)", err, got.Memo)
+	}
+	if memo["a"] != 1 || memo["b"] != 9 || memo["c"] != 3 {
+		t.Fatalf("unexpected merged memo: %v", memo)
 	}
 }
 
@@ -456,10 +538,12 @@ func TestExtensionStoreSyncAndTombstones(t *testing.T) {
 
 	if _, _, err := st.ApplyChanges(ctx, accID, 0, "", &ChangeSet{
 		ExtensionStores: []ExtensionStore{{
-			IndexURL:   "https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json",
-			Name:       "Keiyoushi",
-			BadgeLabel: "Official",
-			SigningKey: "abcd1234key",
+			IndexURL:         "https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json",
+			Name:             "Keiyoushi",
+			BadgeLabel:       "Official",
+			SigningKey:       "abcd1234key",
+			ContactWebsite:   "https://keiyoushi.github.io",
+			ExtensionListURL: "https://keiyoushi.github.io/extensions/",
 		}},
 	}); err != nil {
 		t.Fatal(err)
@@ -473,7 +557,7 @@ func TestExtensionStoreSyncAndTombstones(t *testing.T) {
 		t.Fatalf("expected 1 extension store, got %d", len(cs.ExtensionStores))
 	}
 	es := cs.ExtensionStores[0]
-	if es.Name != "Keiyoushi" || es.SigningKey != "abcd1234key" {
+	if es.Name != "Keiyoushi" || es.SigningKey != "abcd1234key" || es.ContactWebsite != "https://keiyoushi.github.io" {
 		t.Fatalf("unexpected extension store data: %+v", es)
 	}
 
@@ -501,5 +585,53 @@ func TestExtensionStoreSyncAndTombstones(t *testing.T) {
 	}
 	if len(cs.ExtensionStores) != 1 || !cs.ExtensionStores[0].Deleted {
 		t.Fatalf("expected tombstoned extension store, got %+v", cs.ExtensionStores)
+	}
+}
+
+// A sparse push that only carries the index url must not blank a store the
+// server already knows about.
+func TestExtensionStoreSparsePushKeepsDetails(t *testing.T) {
+	st, accID := openTestStore(t)
+	ctx := context.Background()
+
+	if _, _, err := st.ApplyChanges(ctx, accID, 0, "", &ChangeSet{
+		ExtensionStores: []ExtensionStore{{
+			IndexURL:   "https://example.com/index.min.json",
+			Name:       "Store",
+			SigningKey: "key",
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.ApplyChanges(ctx, accID, 0, "", &ChangeSet{
+		ExtensionStores: []ExtensionStore{{IndexURL: "https://example.com/index.min.json"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	cs, _, _ := st.ChangesSince(ctx, accID, 0)
+	if cs.ExtensionStores[0].Name != "Store" || cs.ExtensionStores[0].SigningKey != "key" {
+		t.Fatalf("sparse push blanked the store: %+v", cs.ExtensionStores[0])
+	}
+}
+
+func TestActiveEntityCount(t *testing.T) {
+	st, accID := openTestStore(t)
+	ctx := context.Background()
+
+	if _, _, err := st.ApplyChanges(ctx, accID, 0, "", &ChangeSet{
+		Mangas:   []Manga{{SourceID: 1, URL: "/m/a"}, {SourceID: 1, URL: "/m/b"}},
+		Chapters: []Chapter{{MangaSourceID: 1, MangaURL: "/m/a", URL: "/c/1"}},
+		History:  []HistoryEntry{{MangaSourceID: 1, MangaURL: "/m/a", ChapterURL: "/c/1", ReadAt: 5}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := st.ActiveEntityCount(ctx, accID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 4 {
+		t.Fatalf("entity count = %d, want 4", n)
 	}
 }

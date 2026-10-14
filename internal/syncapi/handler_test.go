@@ -75,7 +75,7 @@ func TestAuthRequired(t *testing.T) {
 func TestPushPullRoundTrip(t *testing.T) {
 	h, key := setupTestServer(t)
 
-	body := `{"device_id":"dev-a","changes":{"mangas":[{"source_id":7,"url":"/m/one","title":"One","favorite":true,"client_version":5}],"preferences":[{"key":"theme","type":"string","value":"dark"}]}}`
+	body := `{"device_id":"dev-a","changes":{"mangas":[{"source_id":7,"url":"/m/one","title":"One","favorite":true,"favorite_at":1700000000000,"sync_version":5}],"preferences":[{"key":"theme","type":"string","value":"dark"}]}}`
 	w := doRequest(t, h, "POST", "/api/v1/sync/push", key, body)
 	if w.Code != http.StatusOK {
 		t.Fatalf("push status = %d (%s)", w.Code, w.Body)
@@ -135,7 +135,7 @@ func TestPushPullChapterDatesRoundTrip(t *testing.T) {
 		t.Fatalf("expected 1 chapter, got %s", w.Body)
 	}
 	c := pull.Changes.Chapters[0]
-	if c.DateFetch != 1700000000001 || c.DateUpload != 1700000000002 {
+	if c.DateFetch == nil || *c.DateFetch != 1700000000001 || c.DateUpload == nil || *c.DateUpload != 1700000000002 {
 		t.Fatalf("dates did not round-trip: %+v", c)
 	}
 }
@@ -174,7 +174,7 @@ func TestPullRequiresSince(t *testing.T) {
 func TestStatus(t *testing.T) {
 	h, key := setupTestServer(t)
 
-	body := `{"changes":{"mangas":[{"source_id":7,"url":"/m/one","client_version":1},{"source_id":7,"url":"/m/two","client_version":1}],"chapters":[{"manga_source_id":7,"manga_url":"/m/one","url":"/c/1"}],"extension_stores":[{"index_url":"https://x/repo.json","name":"X"}]}}`
+	body := `{"changes":{"mangas":[{"source_id":7,"url":"/m/one","sync_version":1},{"source_id":7,"url":"/m/two","sync_version":1}],"chapters":[{"manga_source_id":7,"manga_url":"/m/one","url":"/c/1"}],"extension_stores":[{"index_url":"https://x/repo.json","name":"X"}]}}`
 	if w := doRequest(t, h, "POST", "/api/v1/sync/push", key, body); w.Code != http.StatusOK {
 		t.Fatalf("push: %s", w.Body)
 	}
@@ -365,5 +365,118 @@ func TestWebStaticServing(t *testing.T) {
 	wLogo := doRequest(t, h, "GET", "/logo.svg", "", "")
 	if wLogo.Code != http.StatusOK {
 		t.Fatalf("GET /logo.svg status = %d", wLogo.Code)
+	}
+}
+
+func TestPushValidationNewEntities(t *testing.T) {
+	h, key := setupTestServer(t)
+
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"excluded scanlator missing scanlator", `{"changes":{"excluded_scanlators":[{"manga_source_id":1,"manga_url":"/m/a"}]}}`},
+		{"extension store missing index_url", `{"changes":{"extension_stores":[{"name":"X"}]}}`},
+	}
+	for _, tc := range cases {
+		w := doRequest(t, h, "POST", "/api/v1/sync/push", key, tc.body)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("%s: status = %d, want 400", tc.name, w.Code)
+		}
+	}
+}
+
+func TestErrorResponseShape(t *testing.T) {
+	h, key := setupTestServer(t)
+	w := doRequest(t, h, "GET", "/api/v1/sync/pull?since=abc", key, "")
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+	var resp errorResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("error body is not the documented shape: %v (%s)", err, w.Body)
+	}
+	if resp.Error.Code != "invalid_since" || resp.Error.Message == "" {
+		t.Fatalf("unexpected error body: %s", w.Body)
+	}
+}
+
+func TestNullTimestampsRoundTrip(t *testing.T) {
+	h, key := setupTestServer(t)
+	// A chapter pushed without dates must come back with nulls, not zeros.
+	body := `{"changes":{"chapters":[{"manga_source_id":7,"manga_url":"/m/one","url":"/c/1"}]}}`
+	if w := doRequest(t, h, "POST", "/api/v1/sync/push", key, body); w.Code != http.StatusOK {
+		t.Fatalf("push: %s", w.Body)
+	}
+	w := doRequest(t, h, "GET", "/api/v1/sync/pull?since=0", key, "")
+	if !strings.Contains(w.Body.String(), `"date_fetch":null`) {
+		t.Fatalf("expected null date_fetch in %s", w.Body)
+	}
+}
+
+func TestExcludedScanlatorRoundTrip(t *testing.T) {
+	h, key := setupTestServer(t)
+	body := `{"changes":{"excluded_scanlators":[{"manga_source_id":7,"manga_url":"/m/one","scanlator":"Group A"}]}}`
+	if w := doRequest(t, h, "POST", "/api/v1/sync/push", key, body); w.Code != http.StatusOK {
+		t.Fatalf("push: %s", w.Body)
+	}
+	w := doRequest(t, h, "GET", "/api/v1/sync/pull?since=0", key, "")
+	var pull pullResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &pull); err != nil {
+		t.Fatal(err)
+	}
+	if len(pull.Changes.ExcludedScanlators) != 1 || pull.Changes.ExcludedScanlators[0].Scanlator != "Group A" {
+		t.Fatalf("excluded scanlator did not round-trip: %s", w.Body)
+	}
+}
+
+func TestAccountTooLarge(t *testing.T) {
+	st, err := store.Open(t.TempDir() + "/test.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	key, _ := auth.GenerateKey()
+	if err := st.CreateAccount(context.Background(), auth.HashKey(key), "test"); err != nil {
+		t.Fatal(err)
+	}
+	h := NewHandler(st, config.Config{Registration: config.RegistrationOpen, MaxEntities: 1})
+
+	body := `{"changes":{"mangas":[{"source_id":1,"url":"/m/a"},{"source_id":1,"url":"/m/b"}]}}`
+	w := doRequest(t, h, "POST", "/api/v1/sync/push", key, body)
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413 (%s)", w.Code, w.Body)
+	}
+}
+
+func TestMetricsExposedWhenEnabled(t *testing.T) {
+	st, err := store.Open(t.TempDir() + "/test.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	h := NewHandler(st, config.Config{Registration: config.RegistrationOpen, MetricsEnabled: true})
+	w := doRequest(t, h, "GET", "/metrics", "", "")
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "mihon_sync_pushes_total") {
+		t.Fatalf("metrics: status %d body %s", w.Code, w.Body)
+	}
+}
+
+func TestCapabilitiesAdvertised(t *testing.T) {
+	h, _ := setupTestServer(t)
+	w := doRequest(t, h, "GET", "/api/v1/info", "", "")
+	var info serverInfoResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &info); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, c := range info.Capabilities {
+		if c == "entity.excluded_scanlator" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("capabilities missing excluded_scanlator: %v", info.Capabilities)
 	}
 }
