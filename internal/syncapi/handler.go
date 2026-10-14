@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/nawocci/mihon-sync/internal/auth"
@@ -20,6 +21,17 @@ import (
 // maxPushBody bounds push payloads; an initial full-library upload can be
 // large (tens of thousands of chapters).
 const maxPushBody = 64 << 20
+
+// Version is the server's advertised API version.
+const Version = "0.2.0"
+
+// Metrics holds the counters exposed at /metrics.
+type Metrics struct {
+	Pushes    atomic.Int64
+	Pulls     atomic.Int64
+	Registers atomic.Int64
+	Errors    atomic.Int64
+}
 
 func NewHandler(st *store.Store, cfgs ...config.Config) http.Handler {
 	var cfg config.Config
@@ -40,7 +52,8 @@ func NewHandler(st *store.Store, cfgs ...config.Config) http.Handler {
 		writeJSON(w, http.StatusOK, serverInfoResponse{
 			AllowRegistration: cfg.Registration == config.RegistrationOpen,
 			Registration:      cfg.Registration,
-			Version:           "0.1.0",
+			Version:           Version,
+			Capabilities:      capabilities,
 		})
 	})
 
@@ -66,7 +79,7 @@ func NewHandler(st *store.Store, cfgs ...config.Config) http.Handler {
 		accountID, _ := auth.AccountIDFromContext(r.Context())
 		if err := st.DeleteAccountByID(r.Context(), accountID); err != nil {
 			slog.Error("delete account failed", "account", accountID, "error", err)
-			writeError(w, http.StatusInternalServerError, "failed to delete account")
+			writeError(w, http.StatusInternalServerError, "internal", "failed to delete account")
 			return
 		}
 		slog.Info("account deleted via web/api", "account", accountID)
@@ -74,7 +87,7 @@ func NewHandler(st *store.Store, cfgs ...config.Config) http.Handler {
 	})))
 
 	mux.Handle("POST /api/v1/sync/push", requireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		handlePush(w, r, st)
+		handlePush(w, r, st, cfg)
 	})))
 	mux.Handle("GET /api/v1/sync/pull", requireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handlePull(w, r, st)
@@ -83,6 +96,10 @@ func NewHandler(st *store.Store, cfgs ...config.Config) http.Handler {
 		handleStatus(w, r, st)
 	})))
 
+	if cfg.MetricsEnabled {
+		mux.HandleFunc("GET /metrics", handleMetrics)
+	}
+
 	// Serve embedded web frontend for everything else
 	mux.Handle("/", web.Handler())
 
@@ -90,18 +107,19 @@ func NewHandler(st *store.Store, cfgs ...config.Config) http.Handler {
 }
 
 func handleRegister(w http.ResponseWriter, r *http.Request, st *store.Store, cfg config.Config, limiter *registerLimiter) {
+	globalMetrics.Registers.Add(1)
 	switch cfg.Registration {
 	case config.RegistrationOpen, config.RegistrationInvite, config.RegistrationClosed:
 	default:
-		writeError(w, http.StatusInternalServerError, "invalid registration mode")
+		writeError(w, http.StatusInternalServerError, "internal", "invalid registration mode")
 		return
 	}
 	if cfg.Registration == config.RegistrationClosed {
-		writeError(w, http.StatusForbidden, "registration is disabled on this server")
+		writeError(w, http.StatusForbidden, "registration_disabled", "registration is disabled on this server")
 		return
 	}
 	if !limiter.allow(clientIP(r)) {
-		writeError(w, http.StatusTooManyRequests, "too many registration attempts; try again later")
+		writeError(w, http.StatusTooManyRequests, "rate_limited", "too many registration attempts; try again later")
 		return
 	}
 	var req registerRequest
@@ -112,28 +130,28 @@ func handleRegister(w http.ResponseWriter, r *http.Request, st *store.Store, cfg
 	key, err := auth.GenerateKey()
 	if err != nil {
 		slog.Error("generate key failed", "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to generate API key")
+		writeError(w, http.StatusInternalServerError, "internal", "failed to generate API key")
 		return
 	}
 
 	if cfg.Registration == config.RegistrationInvite {
 		if req.InviteCode == "" {
-			writeError(w, http.StatusForbidden, "invalid or expired invite code")
+			writeError(w, http.StatusForbidden, "invalid_invite", "invalid or expired invite code")
 			return
 		}
 		if err := st.RegisterWithInvite(r.Context(), auth.HashKey(key), req.Label, auth.HashKey(req.InviteCode), time.Now().Unix()); err != nil {
 			if errors.Is(err, store.ErrInvalidInvite) {
-				writeError(w, http.StatusForbidden, "invalid or expired invite code")
+				writeError(w, http.StatusForbidden, "invalid_invite", "invalid or expired invite code")
 				return
 			}
 			slog.Error("invite registration failed", "error", err)
-			writeError(w, http.StatusInternalServerError, "failed to create account")
+			writeError(w, http.StatusInternalServerError, "internal", "failed to create account")
 			return
 		}
 	} else {
 		if err := st.CreateAccount(r.Context(), auth.HashKey(key), req.Label); err != nil {
 			slog.Error("create account failed", "error", err)
-			writeError(w, http.StatusInternalServerError, "failed to create account")
+			writeError(w, http.StatusInternalServerError, "internal", "failed to create account")
 			return
 		}
 	}
@@ -190,21 +208,22 @@ func extractDeviceID(r *http.Request) string {
 	return r.URL.Query().Get("device_id")
 }
 
-func handlePush(w http.ResponseWriter, r *http.Request, st *store.Store) {
+func handlePush(w http.ResponseWriter, r *http.Request, st *store.Store, cfg config.Config) {
+	globalMetrics.Pushes.Add(1)
 	accountID, _ := auth.AccountIDFromContext(r.Context())
 
 	var req pushRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxPushBody)).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		writeError(w, http.StatusBadRequest, "invalid_body", "invalid request body: "+err.Error())
 		return
 	}
 	if err := validate(&req.Changes); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(w, http.StatusBadRequest, "invalid_change", err.Error())
 		return
 	}
 
 	if req.Since < 0 {
-		writeError(w, http.StatusBadRequest, "invalid 'since' value")
+		writeError(w, http.StatusBadRequest, "invalid_since", "invalid 'since' value")
 		return
 	}
 
@@ -213,10 +232,23 @@ func handlePush(w http.ResponseWriter, r *http.Request, st *store.Store) {
 		deviceID = extractDeviceID(r)
 	}
 
+	// Bound the account size so one runaway client cannot exhaust the disk.
+	if cfg.MaxEntities > 0 {
+		if count, err := st.ActiveEntityCount(r.Context(), accountID); err != nil {
+			slog.Error("entity count failed", "account", accountID, "error", err)
+			writeError(w, http.StatusInternalServerError, "internal", "failed to check account size")
+			return
+		} else if count+int64(req.Changes.count()) > int64(cfg.MaxEntities) {
+			writeError(w, http.StatusRequestEntityTooLarge, "account_too_large",
+				"account would exceed the server's entity limit")
+			return
+		}
+	}
+
 	rev, others, err := st.ApplyChanges(r.Context(), accountID, req.Since, deviceID, dtoToStore(&req.Changes))
 	if err != nil {
 		slog.Error("push failed", "account", accountID, "device", deviceID, "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to apply changes")
+		writeError(w, http.StatusInternalServerError, "internal", "failed to apply changes")
 		return
 	}
 	slog.Debug("push applied", "account", accountID, "device", deviceID, "rev", rev)
@@ -224,6 +256,7 @@ func handlePush(w http.ResponseWriter, r *http.Request, st *store.Store) {
 }
 
 func handlePull(w http.ResponseWriter, r *http.Request, st *store.Store) {
+	globalMetrics.Pulls.Add(1)
 	accountID, _ := auth.AccountIDFromContext(r.Context())
 
 	if devID := extractDeviceID(r); devID != "" {
@@ -232,14 +265,14 @@ func handlePull(w http.ResponseWriter, r *http.Request, st *store.Store) {
 
 	since, err := strconv.ParseInt(r.URL.Query().Get("since"), 10, 64)
 	if err != nil || since < 0 {
-		writeError(w, http.StatusBadRequest, "invalid or missing 'since' parameter")
+		writeError(w, http.StatusBadRequest, "invalid_since", "invalid or missing 'since' parameter")
 		return
 	}
 
 	cs, rev, err := st.ChangesSince(r.Context(), accountID, since)
 	if err != nil {
 		slog.Error("pull failed", "account", accountID, "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to fetch changes")
+		writeError(w, http.StatusInternalServerError, "internal", "failed to fetch changes")
 		return
 	}
 	writeJSON(w, http.StatusOK, pullResponse{Rev: rev, Changes: storeToDTO(cs)})
@@ -251,20 +284,60 @@ func handleStatus(w http.ResponseWriter, r *http.Request, st *store.Store) {
 	status, err := st.Status(r.Context(), accountID)
 	if err != nil {
 		slog.Error("status failed", "account", accountID, "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to fetch status")
+		writeError(w, http.StatusInternalServerError, "internal", "failed to fetch status")
 		return
 	}
 	writeJSON(w, http.StatusOK, statusResponse{
-		Rev:                 status.Rev,
-		MangaCount:          status.MangaCount,
-		ChapterCount:        status.ChapterCount,
-		CategoryCount:       status.CategoryCount,
-		HistoryCount:        status.HistoryCount,
-		PreferenceCount:     status.PreferenceCount,
-		ExtensionStoreCount: status.ExtensionStoreCount,
-		DeviceCount:         status.DeviceCount,
-		AccountCreatedAt:    status.AccountCreatedAt,
+		Rev:                    status.Rev,
+		MangaCount:             status.MangaCount,
+		ChapterCount:           status.ChapterCount,
+		CategoryCount:          status.CategoryCount,
+		HistoryCount:           status.HistoryCount,
+		PreferenceCount:        status.PreferenceCount,
+		ExtensionStoreCount:    status.ExtensionStoreCount,
+		ExcludedScanlatorCount: status.ExcludedScanlatorCount,
+		DeviceCount:            status.DeviceCount,
+		AccountCreatedAt:       status.AccountCreatedAt,
 	})
+}
+
+func handleMetrics(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	_, _ = w.Write([]byte(
+		"# HELP mihon_sync_pushes_total Push requests handled.\n" +
+			"# TYPE mihon_sync_pushes_total counter\n" +
+			"mihon_sync_pushes_total " + strconv.FormatInt(globalMetrics.Pushes.Load(), 10) + "\n" +
+			"# HELP mihon_sync_pulls_total Pull requests handled.\n" +
+			"# TYPE mihon_sync_pulls_total counter\n" +
+			"mihon_sync_pulls_total " + strconv.FormatInt(globalMetrics.Pulls.Load(), 10) + "\n" +
+			"# HELP mihon_sync_registers_total Registration requests handled.\n" +
+			"# TYPE mihon_sync_registers_total counter\n" +
+			"mihon_sync_registers_total " + strconv.FormatInt(globalMetrics.Registers.Load(), 10) + "\n" +
+			"# HELP mihon_sync_errors_total Error responses written.\n" +
+			"# TYPE mihon_sync_errors_total counter\n" +
+			"mihon_sync_errors_total " + strconv.FormatInt(globalMetrics.Errors.Load(), 10) + "\n",
+	))
+}
+
+var globalMetrics Metrics
+
+// MetricsSnapshot returns the process-wide counter values (useful for tests
+// and embedding). It returns a plain value, not the Metrics struct, so the
+// atomics are never copied.
+type MetricsSnapshot struct {
+	Pushes    int64
+	Pulls     int64
+	Registers int64
+	Errors    int64
+}
+
+func SnapshotMetrics() MetricsSnapshot {
+	return MetricsSnapshot{
+		Pushes:    globalMetrics.Pushes.Load(),
+		Pulls:     globalMetrics.Pulls.Load(),
+		Registers: globalMetrics.Registers.Load(),
+		Errors:    globalMetrics.Errors.Load(),
+	}
 }
 
 // validate enforces basic invariants so malformed entities can't poison the
@@ -295,6 +368,11 @@ func validate(cs *changeSetDTO) error {
 			return errString("history entry missing chapter_url or manga_url")
 		}
 	}
+	for _, es := range cs.ExcludedScanlators {
+		if es.Scanlator == "" || es.MangaURL == "" {
+			return errString("excluded_scanlator entry missing scanlator or manga_url")
+		}
+	}
 	for _, p := range cs.Preferences {
 		if p.Key == "" {
 			return errString("preference entry missing key")
@@ -303,7 +381,18 @@ func validate(cs *changeSetDTO) error {
 			return errString("preference " + strconv.Quote(p.Key) + " has invalid JSON value")
 		}
 	}
+	for _, es := range cs.ExtensionStores {
+		if es.IndexURL == "" {
+			return errString("extension_store entry missing index_url")
+		}
+	}
 	return nil
+}
+
+// count returns the total number of entities in the wire batch.
+func (cs *changeSetDTO) count() int {
+	return len(cs.Mangas) + len(cs.Chapters) + len(cs.Categories) + len(cs.MangaCategories) +
+		len(cs.History) + len(cs.ExcludedScanlators) + len(cs.Preferences) + len(cs.ExtensionStores)
 }
 
 type stringError string
@@ -317,6 +406,9 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-func writeError(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, errorResponse{Error: msg})
+func writeError(w http.ResponseWriter, status int, code, msg string) {
+	if status >= 500 {
+		globalMetrics.Errors.Add(1)
+	}
+	writeJSON(w, status, errorResponse{Error: errorBody{Code: code, Message: msg}})
 }
