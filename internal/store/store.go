@@ -59,12 +59,13 @@ CREATE TABLE IF NOT EXISTS mangas (
     url             TEXT NOT NULL,
     title           TEXT NOT NULL DEFAULT '',
     favorite        INTEGER NOT NULL DEFAULT 1,
+    favorite_at     INTEGER,
+    reader_flags    INTEGER NOT NULL DEFAULT 0,
     chapter_flags   INTEGER NOT NULL DEFAULT 0,
-    viewer_flags    INTEGER NOT NULL DEFAULT 0,
     update_strategy TEXT NOT NULL DEFAULT 'ALWAYS_UPDATE',
     notes           TEXT NOT NULL DEFAULT '',
-    date_added      INTEGER NOT NULL DEFAULT 0,
-    client_version  INTEGER NOT NULL DEFAULT 0,
+    memo            BLOB,
+    sync_version    INTEGER NOT NULL DEFAULT 0,
     rev             INTEGER NOT NULL,
     deleted         INTEGER NOT NULL DEFAULT 0,
     updated_at      INTEGER NOT NULL,
@@ -81,9 +82,10 @@ CREATE TABLE IF NOT EXISTS chapters (
     read            INTEGER NOT NULL DEFAULT 0,
     bookmark        INTEGER NOT NULL DEFAULT 0,
     last_page_read  INTEGER NOT NULL DEFAULT 0,
-    date_fetch      INTEGER NOT NULL DEFAULT 0,
-    date_upload     INTEGER NOT NULL DEFAULT 0,
-    client_version  INTEGER NOT NULL DEFAULT 0,
+    date_fetch      INTEGER,
+    date_upload     INTEGER,
+    memo            BLOB,
+    sync_version    INTEGER NOT NULL DEFAULT 0,
     rev             INTEGER NOT NULL,
     updated_at      INTEGER NOT NULL,
     PRIMARY KEY (account_id, manga_source_id, manga_url, url)
@@ -121,13 +123,26 @@ CREATE TABLE IF NOT EXISTS history (
     manga_source_id INTEGER NOT NULL,
     manga_url       TEXT NOT NULL,
     chapter_url     TEXT NOT NULL,
-    last_read       INTEGER NOT NULL DEFAULT 0,
+    last_read       INTEGER,
     read_duration   INTEGER NOT NULL DEFAULT 0,
     rev             INTEGER NOT NULL,
     updated_at      INTEGER NOT NULL,
     PRIMARY KEY (account_id, manga_source_id, manga_url, chapter_url)
 );
 CREATE INDEX IF NOT EXISTS idx_history_rev ON history(account_id, rev);
+
+CREATE TABLE IF NOT EXISTS excluded_scanlators (
+    account_id      INTEGER NOT NULL,
+    manga_source_id INTEGER NOT NULL,
+    manga_url       TEXT NOT NULL,
+    scanlator       TEXT NOT NULL,
+    rev             INTEGER NOT NULL,
+    deleted         INTEGER NOT NULL DEFAULT 0,
+    updated_at      INTEGER NOT NULL,
+    PRIMARY KEY (account_id, manga_source_id, manga_url, scanlator)
+);
+CREATE INDEX IF NOT EXISTS idx_excluded_scanlators_rev ON excluded_scanlators(account_id, rev);
+CREATE INDEX IF NOT EXISTS idx_excluded_scanlators_active ON excluded_scanlators(account_id) WHERE deleted = 0;
 
 CREATE TABLE IF NOT EXISTS preferences (
     account_id INTEGER NOT NULL,
@@ -143,14 +158,18 @@ CREATE INDEX IF NOT EXISTS idx_preferences_rev ON preferences(account_id, rev);
 CREATE INDEX IF NOT EXISTS idx_preferences_active ON preferences(account_id) WHERE deleted = 0;
 
 CREATE TABLE IF NOT EXISTS extension_stores (
-    account_id  INTEGER NOT NULL,
-    index_url   TEXT NOT NULL,
-    name        TEXT NOT NULL DEFAULT '',
-    badge_label TEXT NOT NULL DEFAULT '',
-    signing_key TEXT NOT NULL DEFAULT '',
-    rev         INTEGER NOT NULL,
-    deleted     INTEGER NOT NULL DEFAULT 0,
-    updated_at  INTEGER NOT NULL,
+    account_id          INTEGER NOT NULL,
+    index_url           TEXT NOT NULL,
+    name                TEXT NOT NULL DEFAULT '',
+    badge_label         TEXT NOT NULL DEFAULT '',
+    signing_key         TEXT NOT NULL DEFAULT '',
+    contact_website     TEXT NOT NULL DEFAULT '',
+    contact_discord     TEXT NOT NULL DEFAULT '',
+    is_legacy           INTEGER NOT NULL DEFAULT 0,
+    extension_list_url  TEXT NOT NULL DEFAULT '',
+    rev                 INTEGER NOT NULL,
+    deleted             INTEGER NOT NULL DEFAULT 0,
+    updated_at          INTEGER NOT NULL,
     PRIMARY KEY (account_id, index_url)
 );
 CREATE INDEX IF NOT EXISTS idx_extension_stores_rev ON extension_stores(account_id, rev);
@@ -170,16 +189,27 @@ func (s *Store) migrate() error {
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
-	// Existing databases predate the Updates-page date columns; add them if missing.
-	for _, stmt := range []string{
-		`ALTER TABLE chapters ADD COLUMN date_fetch INTEGER NOT NULL DEFAULT 0`,
-		`ALTER TABLE chapters ADD COLUMN date_upload INTEGER NOT NULL DEFAULT 0`,
-	} {
+	// Columns added after the first release of a table are added here so an
+	// existing database picks them up; a fresh one already has them from schema.
+	alterations := []string{
+		`ALTER TABLE mangas ADD COLUMN favorite_at INTEGER`,
+		`ALTER TABLE mangas ADD COLUMN memo BLOB`,
+		`ALTER TABLE mangas ADD COLUMN sync_version INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE chapters ADD COLUMN date_fetch INTEGER`,
+		`ALTER TABLE chapters ADD COLUMN date_upload INTEGER`,
+		`ALTER TABLE chapters ADD COLUMN memo BLOB`,
+		`ALTER TABLE chapters ADD COLUMN sync_version INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE extension_stores ADD COLUMN contact_website TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE extension_stores ADD COLUMN contact_discord TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE extension_stores ADD COLUMN is_legacy INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE extension_stores ADD COLUMN extension_list_url TEXT NOT NULL DEFAULT ''`,
+	}
+	for _, stmt := range alterations {
 		if _, err := s.db.Exec(stmt); err != nil {
 			// Ignore "duplicate column" on re-run; surface anything else.
 			msg := err.Error()
 			if !(strings.Contains(msg, "duplicate column") || strings.Contains(msg, "already exists")) {
-				return fmt.Errorf("migrate chapters dates: %w", err)
+				return fmt.Errorf("migrate: %s: %w", stmt, err)
 			}
 		}
 	}
@@ -191,7 +221,10 @@ func (s *Store) migrate() error {
 // can propagate.
 func (s *Store) GC(ctx context.Context, retention time.Duration) error {
 	cutoff := time.Now().Add(-retention).Unix()
-	tables := []string{"mangas", "categories", "manga_categories", "preferences", "extension_stores"}
+	tables := []string{
+		"mangas", "categories", "manga_categories", "excluded_scanlators",
+		"preferences", "extension_stores",
+	}
 	for _, t := range tables {
 		if _, err := s.db.ExecContext(ctx,
 			fmt.Sprintf("DELETE FROM %s WHERE deleted = 1 AND updated_at < ?", t), cutoff); err != nil {
@@ -216,4 +249,27 @@ func (s *Store) TouchDevice(ctx context.Context, accountID int64, deviceID strin
 		 ON CONFLICT(account_id, device_id) DO UPDATE SET last_seen = excluded.last_seen`,
 		accountID, deviceID, now)
 	return err
+}
+
+// ActiveEntityCount returns the number of non-tombstoned entities held by the
+// account, used to enforce the per-account cap.
+func (s *Store) ActiveEntityCount(ctx context.Context, accountID int64) (int64, error) {
+	var total int64
+	for _, q := range []string{
+		`SELECT COUNT(*) FROM mangas WHERE account_id = ? AND deleted = 0`,
+		`SELECT COUNT(*) FROM chapters WHERE account_id = ?`,
+		`SELECT COUNT(*) FROM categories WHERE account_id = ? AND deleted = 0`,
+		`SELECT COUNT(*) FROM manga_categories WHERE account_id = ? AND deleted = 0`,
+		`SELECT COUNT(*) FROM history WHERE account_id = ?`,
+		`SELECT COUNT(*) FROM excluded_scanlators WHERE account_id = ? AND deleted = 0`,
+		`SELECT COUNT(*) FROM preferences WHERE account_id = ? AND deleted = 0`,
+		`SELECT COUNT(*) FROM extension_stores WHERE account_id = ? AND deleted = 0`,
+	} {
+		var n int64
+		if err := s.db.QueryRowContext(ctx, q, accountID).Scan(&n); err != nil {
+			return 0, err
+		}
+		total += n
+	}
+	return total, nil
 }

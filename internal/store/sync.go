@@ -13,9 +13,16 @@ import (
 // new revision plus any changes other devices pushed after `since` (excluding
 // this batch), so the caller can skip a follow-up pull.
 //
-// Merge rules mirror Mihon's backup restore: manga/chapter fields go to the
-// higher client_version, favorite/read/bookmark are OR-merged, history uses
-// max(), and categories/preferences are last-write-wins with tombstones.
+// Merge rules mirror the app's backup restore:
+//   - manga: fields follow the higher sync_version, favorite is OR-merged and
+//     favorite_at takes the earliest known value
+//   - chapters: read/bookmark are OR-merged, last_page_read is furthest, and
+//     Updates-page dates take the earliest known value
+//   - history: last_read and read_duration take the maximum
+//   - categories, links, scanlators, preferences and stores are last-write-wins
+//
+// Deletions are tombstones. Nullable timestamps arrive as 0 on the wire, which
+// means "unknown" and never overwrites a known value.
 func (s *Store) ApplyChanges(
 	ctx context.Context,
 	accountID, since int64,
@@ -69,6 +76,11 @@ func (s *Store) ApplyChanges(
 			return 0, nil, err
 		}
 	}
+	for _, es := range cs.ExcludedScanlators {
+		if err := mergeExcludedScanlator(ctx, tx, accountID, rev, now, es); err != nil {
+			return 0, nil, err
+		}
+	}
 	for _, p := range cs.Preferences {
 		if err := mergePreference(ctx, tx, accountID, rev, now, p); err != nil {
 			return 0, nil, err
@@ -100,102 +112,117 @@ func mergeManga(ctx context.Context, tx *sql.Tx, accountID, rev, now int64, in M
 		in.UpdateStrategy = "ALWAYS_UPDATE"
 	}
 	var ex Manga
+	var exFavoriteAt sql.NullInt64
+	var exMemo []byte
 	err := tx.QueryRowContext(ctx,
-		`SELECT title, favorite, chapter_flags, viewer_flags, update_strategy, notes,
-		        date_added, client_version, deleted
+		`SELECT title, favorite, favorite_at, reader_flags, chapter_flags, update_strategy,
+		        notes, memo, sync_version, deleted
 		 FROM mangas WHERE account_id = ? AND source_id = ? AND url = ?`,
 		accountID, in.SourceID, in.URL).
-		Scan(&ex.Title, &ex.Favorite, &ex.ChapterFlags, &ex.ViewerFlags, &ex.UpdateStrategy,
-			&ex.Notes, &ex.DateAdded, &ex.ClientVersion, &ex.Deleted)
+		Scan(&ex.Title, &ex.Favorite, &exFavoriteAt, &ex.ReaderFlags, &ex.ChapterFlags,
+			&ex.UpdateStrategy, &ex.Notes, &exMemo, &ex.SyncVersion, &ex.Deleted)
 
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		_, err = tx.ExecContext(ctx,
-			`INSERT INTO mangas(account_id, source_id, url, title, favorite, chapter_flags,
-			    viewer_flags, update_strategy, notes, date_added, client_version, rev, deleted, updated_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			accountID, in.SourceID, in.URL, in.Title, in.Favorite, in.ChapterFlags,
-			in.ViewerFlags, in.UpdateStrategy, in.Notes, in.DateAdded, in.ClientVersion,
-			rev, in.Deleted, now)
+			`INSERT INTO mangas(account_id, source_id, url, title, favorite, favorite_at,
+			    reader_flags, chapter_flags, update_strategy, notes, memo, sync_version,
+			    rev, deleted, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			accountID, in.SourceID, in.URL, in.Title, in.Favorite, nullIfZero(in.FavoriteAt),
+			in.ReaderFlags, in.ChapterFlags, in.UpdateStrategy, in.Notes, nullBlob(in.Memo),
+			in.SyncVersion, rev, in.Deleted, now)
 		return err
 	case err != nil:
 		return fmt.Errorf("select manga: %w", err)
 	}
+	ex.FavoriteAt = exFavoriteAt.Int64
+	ex.Memo = exMemo
 
-	// Higher client_version wins. On a tie, a deletion beats a non-deletion so a
+	// Higher sync_version wins. On a tie, a deletion beats a non-deletion so a
 	// stale device cannot resurrect an entry another device removed.
-	inWins := in.ClientVersion > ex.ClientVersion ||
-		(in.ClientVersion == ex.ClientVersion && in.Deleted && !ex.Deleted)
+	inWins := in.SyncVersion > ex.SyncVersion ||
+		(in.SyncVersion == ex.SyncVersion && in.Deleted && !ex.Deleted)
 	winner := in
 	if !inWins {
 		winner = ex
 	}
 	deleted := winner.Deleted
 	// A strictly-newer re-add (favorited and not a tombstone) clears the tombstone.
-	if in.Favorite && !in.Deleted && in.ClientVersion > ex.ClientVersion {
+	if in.Favorite && !in.Deleted && in.SyncVersion > ex.SyncVersion {
 		deleted = false
 	}
 	favorite := ex.Favorite || in.Favorite
+	favoriteAt := earliestKnown(ex.FavoriteAt, in.FavoriteAt)
 	if deleted {
 		// A removed entry is never in the library; otherwise a tombstone would
 		// persist as the contradictory (favorite=true, deleted=true) state, which
 		// lets a stale device flip it back to alive.
 		favorite = false
+		favoriteAt = 0
 	}
 	merged := Manga{
 		SourceID:       in.SourceID,
 		URL:            in.URL,
 		Title:          winner.Title,
 		Favorite:       favorite,
+		FavoriteAt:     favoriteAt,
+		ReaderFlags:    winner.ReaderFlags,
 		ChapterFlags:   winner.ChapterFlags,
-		ViewerFlags:    winner.ViewerFlags,
 		UpdateStrategy: winner.UpdateStrategy,
 		Notes:          winner.Notes,
-		DateAdded:      winner.DateAdded,
-		ClientVersion:  max(ex.ClientVersion, in.ClientVersion),
+		Memo:           mergeMemo(ex.Memo, in.Memo),
+		SyncVersion:    max(ex.SyncVersion, in.SyncVersion),
 		Deleted:        deleted,
 	}
 	// Skip no-op writes: bumping rev on an identical merge would echo the row
-	// back to other devices forever (client re-pushes what it just applied).
+	// back to other devices forever (a client re-pushes what it just applied).
 	if merged.Title == ex.Title && merged.Favorite == ex.Favorite &&
-		merged.ChapterFlags == ex.ChapterFlags && merged.ViewerFlags == ex.ViewerFlags &&
-		merged.UpdateStrategy == ex.UpdateStrategy && merged.Notes == ex.Notes &&
-		merged.DateAdded == ex.DateAdded && merged.ClientVersion == ex.ClientVersion &&
-		merged.Deleted == ex.Deleted {
+		merged.FavoriteAt == ex.FavoriteAt && merged.ReaderFlags == ex.ReaderFlags &&
+		merged.ChapterFlags == ex.ChapterFlags && merged.UpdateStrategy == ex.UpdateStrategy &&
+		merged.Notes == ex.Notes && sameBlob(merged.Memo, ex.Memo) &&
+		merged.SyncVersion == ex.SyncVersion && merged.Deleted == ex.Deleted {
 		return nil
 	}
 	_, err = tx.ExecContext(ctx,
-		`UPDATE mangas SET title = ?, favorite = ?, chapter_flags = ?, viewer_flags = ?,
-		    update_strategy = ?, notes = ?, date_added = ?, client_version = ?, rev = ?,
-		    deleted = ?, updated_at = ?
+		`UPDATE mangas SET title = ?, favorite = ?, favorite_at = ?, reader_flags = ?,
+		    chapter_flags = ?, update_strategy = ?, notes = ?, memo = ?, sync_version = ?,
+		    rev = ?, deleted = ?, updated_at = ?
 		 WHERE account_id = ? AND source_id = ? AND url = ?`,
-		merged.Title, merged.Favorite, merged.ChapterFlags, merged.ViewerFlags,
-		merged.UpdateStrategy, merged.Notes, merged.DateAdded, merged.ClientVersion,
-		rev, merged.Deleted, now, accountID, in.SourceID, in.URL)
+		merged.Title, merged.Favorite, nullIfZero(merged.FavoriteAt), merged.ReaderFlags,
+		merged.ChapterFlags, merged.UpdateStrategy, merged.Notes, nullBlob(merged.Memo),
+		merged.SyncVersion, rev, merged.Deleted, now, accountID, in.SourceID, in.URL)
 	return err
 }
 
 func mergeChapter(ctx context.Context, tx *sql.Tx, accountID, rev, now int64, in Chapter) error {
 	var ex Chapter
+	var exDateFetch, exDateUpload sql.NullInt64
+	var exMemo []byte
 	err := tx.QueryRowContext(ctx,
-		`SELECT read, bookmark, last_page_read, date_fetch, date_upload, client_version
+		`SELECT read, bookmark, last_page_read, date_fetch, date_upload, memo, sync_version
 		 FROM chapters
 		 WHERE account_id = ? AND manga_source_id = ? AND manga_url = ? AND url = ?`,
 		accountID, in.MangaSourceID, in.MangaURL, in.URL).
-		Scan(&ex.Read, &ex.Bookmark, &ex.LastPageRead, &ex.DateFetch, &ex.DateUpload, &ex.ClientVersion)
+		Scan(&ex.Read, &ex.Bookmark, &ex.LastPageRead, &exDateFetch, &exDateUpload,
+			&exMemo, &ex.SyncVersion)
 
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		_, err = tx.ExecContext(ctx,
 			`INSERT INTO chapters(account_id, manga_source_id, manga_url, url, read, bookmark,
-			    last_page_read, date_fetch, date_upload, client_version, rev, updated_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			    last_page_read, date_fetch, date_upload, memo, sync_version, rev, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			accountID, in.MangaSourceID, in.MangaURL, in.URL, in.Read, in.Bookmark,
-			in.LastPageRead, in.DateFetch, in.DateUpload, in.ClientVersion, rev, now)
+			in.LastPageRead, nullIfZero(in.DateFetch), nullIfZero(in.DateUpload),
+			nullBlob(in.Memo), in.SyncVersion, rev, now)
 		return err
 	case err != nil:
 		return fmt.Errorf("select chapter: %w", err)
 	}
+	ex.DateFetch = exDateFetch.Int64
+	ex.DateUpload = exDateUpload.Int64
+	ex.Memo = exMemo
 
 	page := max(ex.LastPageRead, in.LastPageRead)
 	switch {
@@ -206,37 +233,26 @@ func mergeChapter(ctx context.Context, tx *sql.Tx, accountID, rev, now int64, in
 	}
 	read := ex.Read || in.Read
 	bookmark := ex.Bookmark || in.Bookmark
-	version := max(ex.ClientVersion, in.ClientVersion)
+	version := max(ex.SyncVersion, in.SyncVersion)
 	// Updates-page dates: earliest known wins; 0 means unknown (old client) and
 	// never overwrites. Lets a fresh device's bulk-fetch now-dates converge back
 	// to the originals so its Updates list matches the old device.
-	dateFetch := minNonZero(ex.DateFetch, in.DateFetch)
-	dateUpload := minNonZero(ex.DateUpload, in.DateUpload)
+	dateFetch := earliestKnown(ex.DateFetch, in.DateFetch)
+	dateUpload := earliestKnown(ex.DateUpload, in.DateUpload)
+	memo := mergeMemo(ex.Memo, in.Memo)
 	// Skip no-op writes so applied changes don't echo back to other devices.
 	if read == ex.Read && bookmark == ex.Bookmark && page == ex.LastPageRead &&
 		dateFetch == ex.DateFetch && dateUpload == ex.DateUpload &&
-		version == ex.ClientVersion {
+		version == ex.SyncVersion && sameBlob(memo, ex.Memo) {
 		return nil
 	}
 	_, err = tx.ExecContext(ctx,
 		`UPDATE chapters SET read = ?, bookmark = ?, last_page_read = ?, date_fetch = ?,
-		    date_upload = ?, client_version = ?,
-		    rev = ?, updated_at = ?
+		    date_upload = ?, memo = ?, sync_version = ?, rev = ?, updated_at = ?
 		 WHERE account_id = ? AND manga_source_id = ? AND manga_url = ? AND url = ?`,
-		read, bookmark, page, dateFetch, dateUpload, version, rev, now,
-		accountID, in.MangaSourceID, in.MangaURL, in.URL)
+		read, bookmark, page, nullIfZero(dateFetch), nullIfZero(dateUpload), nullBlob(memo),
+		version, rev, now, accountID, in.MangaSourceID, in.MangaURL, in.URL)
 	return err
-}
-
-func minNonZero(a, b int64) int64 {
-	switch {
-	case a <= 0:
-		return b
-	case b <= 0:
-		return a
-	default:
-		return min(a, b)
-	}
 }
 
 func mergeCategory(ctx context.Context, tx *sql.Tx, accountID, rev, now int64, in Category) error {
@@ -266,18 +282,30 @@ func mergeMangaCategory(ctx context.Context, tx *sql.Tx, accountID, rev, now int
 }
 
 func mergeHistory(ctx context.Context, tx *sql.Tx, accountID, rev, now int64, in HistoryEntry) error {
+	// A null last_read is a reset and does not propagate; only advance it.
 	_, err := tx.ExecContext(ctx,
 		`INSERT INTO history(account_id, manga_source_id, manga_url, chapter_url,
 		    last_read, read_duration, rev, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(account_id, manga_source_id, manga_url, chapter_url) DO UPDATE SET
-		    last_read = MAX(last_read, excluded.last_read),
+		    last_read = MAX(coalesce(last_read, 0), coalesce(excluded.last_read, 0)),
 		    read_duration = MAX(read_duration, excluded.read_duration),
 		    rev = excluded.rev, updated_at = excluded.updated_at
-		 WHERE history.last_read < excluded.last_read
+		 WHERE coalesce(history.last_read, 0) < coalesce(excluded.last_read, 0)
 		    OR history.read_duration < excluded.read_duration`,
 		accountID, in.MangaSourceID, in.MangaURL, in.ChapterURL,
-		in.LastRead, in.ReadDuration, rev, now)
+		nullIfZero(in.ReadAt), in.ReadDuration, rev, now)
+	return err
+}
+
+func mergeExcludedScanlator(ctx context.Context, tx *sql.Tx, accountID, rev, now int64, in ExcludedScanlator) error {
+	_, err := tx.ExecContext(ctx,
+		`INSERT INTO excluded_scanlators(account_id, manga_source_id, manga_url, scanlator, rev, deleted, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(account_id, manga_source_id, manga_url, scanlator) DO UPDATE SET
+		    rev = excluded.rev, deleted = excluded.deleted, updated_at = excluded.updated_at
+		 WHERE excluded_scanlators.deleted != excluded.deleted`,
+		accountID, in.MangaSourceID, in.MangaURL, in.Scanlator, rev, in.Deleted, now)
 	return err
 }
 
@@ -298,42 +326,51 @@ func mergePreference(ctx context.Context, tx *sql.Tx, accountID, rev, now int64,
 func mergeExtensionStore(ctx context.Context, tx *sql.Tx, accountID, rev, now int64, in ExtensionStore) error {
 	var ex ExtensionStore
 	err := tx.QueryRowContext(ctx,
-		`SELECT name, badge_label, signing_key, deleted
+		`SELECT name, badge_label, signing_key, contact_website, contact_discord,
+		        is_legacy, extension_list_url, deleted
 		 FROM extension_stores WHERE account_id = ? AND index_url = ?`,
 		accountID, in.IndexURL).
-		Scan(&ex.Name, &ex.BadgeLabel, &ex.SigningKey, &ex.Deleted)
+		Scan(&ex.Name, &ex.BadgeLabel, &ex.SigningKey, &ex.ContactWebsite, &ex.ContactDiscord,
+			&ex.IsLegacy, &ex.ExtensionListURL, &ex.Deleted)
 
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		_, err = tx.ExecContext(ctx,
 			`INSERT INTO extension_stores(account_id, index_url, name, badge_label, signing_key,
-			    rev, deleted, updated_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			accountID, in.IndexURL, in.Name, in.BadgeLabel, in.SigningKey, rev, in.Deleted, now)
+			    contact_website, contact_discord, is_legacy, extension_list_url, rev, deleted, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			accountID, in.IndexURL, in.Name, in.BadgeLabel, in.SigningKey, in.ContactWebsite,
+			in.ContactDiscord, in.IsLegacy, in.ExtensionListURL, rev, in.Deleted, now)
 		return err
 	case err != nil:
 		return fmt.Errorf("select extension_store: %w", err)
 	}
 
-	name := in.Name
-	badgeLabel := in.BadgeLabel
-	signingKey := in.SigningKey
+	// A sparse push (name and signing key blank) keeps whatever is stored, so an
+	// older client that only knew the index url cannot blank a known store.
+	name, badgeLabel, signingKey := in.Name, in.BadgeLabel, in.SigningKey
+	contactWebsite, contactDiscord := in.ContactWebsite, in.ContactDiscord
+	isLegacy, extensionListURL := in.IsLegacy, in.ExtensionListURL
 	if name == "" && signingKey == "" && ex.Name != "" {
-		name = ex.Name
-		badgeLabel = ex.BadgeLabel
-		signingKey = ex.SigningKey
+		name, badgeLabel, signingKey = ex.Name, ex.BadgeLabel, ex.SigningKey
+		contactWebsite, contactDiscord = ex.ContactWebsite, ex.ContactDiscord
+		isLegacy, extensionListURL = ex.IsLegacy, ex.ExtensionListURL
 	}
 
-	if ex.Name == name && ex.BadgeLabel == badgeLabel &&
-		ex.SigningKey == signingKey && ex.Deleted == in.Deleted {
+	if ex.Name == name && ex.BadgeLabel == badgeLabel && ex.SigningKey == signingKey &&
+		ex.ContactWebsite == contactWebsite && ex.ContactDiscord == contactDiscord &&
+		ex.IsLegacy == isLegacy && ex.ExtensionListURL == extensionListURL &&
+		ex.Deleted == in.Deleted {
 		return nil
 	}
 
 	_, err = tx.ExecContext(ctx,
-		`UPDATE extension_stores SET name = ?, badge_label = ?, signing_key = ?, rev = ?,
-		    deleted = ?, updated_at = ?
+		`UPDATE extension_stores SET name = ?, badge_label = ?, signing_key = ?,
+		    contact_website = ?, contact_discord = ?, is_legacy = ?, extension_list_url = ?,
+		    rev = ?, deleted = ?, updated_at = ?
 		 WHERE account_id = ? AND index_url = ?`,
-		name, badgeLabel, signingKey, rev, in.Deleted, now, accountID, in.IndexURL)
+		name, badgeLabel, signingKey, contactWebsite, contactDiscord, isLegacy, extensionListURL,
+		rev, in.Deleted, now, accountID, in.IndexURL)
 	return err
 }
 
@@ -369,38 +406,42 @@ func changesInRange(ctx context.Context, q queryer, accountID, since, before int
 	cs := &ChangeSet{}
 
 	rows, err := q.QueryContext(ctx,
-		`SELECT source_id, url, title, favorite, chapter_flags, viewer_flags, update_strategy,
-		        notes, date_added, client_version, rev, deleted
+		`SELECT source_id, url, title, favorite, coalesce(favorite_at, 0), reader_flags,
+		        chapter_flags, update_strategy, notes, memo, sync_version, rev, deleted
 		 FROM mangas WHERE account_id = ? AND `+revFilter, accountID, since, beforeClause)
 	if err != nil {
 		return nil, fmt.Errorf("pull mangas: %w", err)
 	}
 	for rows.Next() {
 		var m Manga
-		if err := rows.Scan(&m.SourceID, &m.URL, &m.Title, &m.Favorite, &m.ChapterFlags,
-			&m.ViewerFlags, &m.UpdateStrategy, &m.Notes, &m.DateAdded, &m.ClientVersion,
-			&m.Rev, &m.Deleted); err != nil {
+		var memo []byte
+		if err := rows.Scan(&m.SourceID, &m.URL, &m.Title, &m.Favorite, &m.FavoriteAt,
+			&m.ReaderFlags, &m.ChapterFlags, &m.UpdateStrategy, &m.Notes, &memo,
+			&m.SyncVersion, &m.Rev, &m.Deleted); err != nil {
 			rows.Close()
 			return nil, err
 		}
+		m.Memo = memo
 		cs.Mangas = append(cs.Mangas, m)
 	}
 	rows.Close()
 
 	rows, err = q.QueryContext(ctx,
 		`SELECT manga_source_id, manga_url, url, read, bookmark, last_page_read,
-		        date_fetch, date_upload, client_version, rev
+		        coalesce(date_fetch, 0), coalesce(date_upload, 0), memo, sync_version, rev
 		 FROM chapters WHERE account_id = ? AND `+revFilter, accountID, since, beforeClause)
 	if err != nil {
 		return nil, fmt.Errorf("pull chapters: %w", err)
 	}
 	for rows.Next() {
 		var c Chapter
+		var memo []byte
 		if err := rows.Scan(&c.MangaSourceID, &c.MangaURL, &c.URL, &c.Read, &c.Bookmark,
-			&c.LastPageRead, &c.DateFetch, &c.DateUpload, &c.ClientVersion, &c.Rev); err != nil {
+			&c.LastPageRead, &c.DateFetch, &c.DateUpload, &memo, &c.SyncVersion, &c.Rev); err != nil {
 			rows.Close()
 			return nil, err
 		}
+		c.Memo = memo
 		cs.Chapters = append(cs.Chapters, c)
 	}
 	rows.Close()
@@ -438,19 +479,35 @@ func changesInRange(ctx context.Context, q queryer, accountID, since, before int
 	rows.Close()
 
 	rows, err = q.QueryContext(ctx,
-		`SELECT manga_source_id, manga_url, chapter_url, last_read, read_duration, rev
+		`SELECT manga_source_id, manga_url, chapter_url, coalesce(last_read, 0), read_duration, rev
 		 FROM history WHERE account_id = ? AND `+revFilter, accountID, since, beforeClause)
 	if err != nil {
 		return nil, fmt.Errorf("pull history: %w", err)
 	}
 	for rows.Next() {
 		var h HistoryEntry
-		if err := rows.Scan(&h.MangaSourceID, &h.MangaURL, &h.ChapterURL, &h.LastRead,
+		if err := rows.Scan(&h.MangaSourceID, &h.MangaURL, &h.ChapterURL, &h.ReadAt,
 			&h.ReadDuration, &h.Rev); err != nil {
 			rows.Close()
 			return nil, err
 		}
 		cs.History = append(cs.History, h)
+	}
+	rows.Close()
+
+	rows, err = q.QueryContext(ctx,
+		`SELECT manga_source_id, manga_url, scanlator, rev, deleted
+		 FROM excluded_scanlators WHERE account_id = ? AND `+revFilter, accountID, since, beforeClause)
+	if err != nil {
+		return nil, fmt.Errorf("pull excluded_scanlators: %w", err)
+	}
+	for rows.Next() {
+		var es ExcludedScanlator
+		if err := rows.Scan(&es.MangaSourceID, &es.MangaURL, &es.Scanlator, &es.Rev, &es.Deleted); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		cs.ExcludedScanlators = append(cs.ExcludedScanlators, es)
 	}
 	rows.Close()
 
@@ -473,14 +530,17 @@ func changesInRange(ctx context.Context, q queryer, accountID, since, before int
 	rows.Close()
 
 	rows, err = q.QueryContext(ctx,
-		`SELECT index_url, name, badge_label, signing_key, rev, deleted
+		`SELECT index_url, name, badge_label, signing_key, contact_website, contact_discord,
+		        is_legacy, extension_list_url, rev, deleted
 		 FROM extension_stores WHERE account_id = ? AND `+revFilter, accountID, since, beforeClause)
 	if err != nil {
 		return nil, fmt.Errorf("pull extension_stores: %w", err)
 	}
 	for rows.Next() {
 		var es ExtensionStore
-		if err := rows.Scan(&es.IndexURL, &es.Name, &es.BadgeLabel, &es.SigningKey, &es.Rev, &es.Deleted); err != nil {
+		if err := rows.Scan(&es.IndexURL, &es.Name, &es.BadgeLabel, &es.SigningKey,
+			&es.ContactWebsite, &es.ContactDiscord, &es.IsLegacy, &es.ExtensionListURL,
+			&es.Rev, &es.Deleted); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -531,6 +591,7 @@ func (s *Store) Status(ctx context.Context, accountID int64) (*Status, error) {
 		{"SELECT COUNT(*) FROM history WHERE account_id = ?", []any{accountID}, &st.HistoryCount},
 		{"SELECT COUNT(*) FROM preferences WHERE account_id = ? AND deleted = 0", []any{accountID}, &st.PreferenceCount},
 		{"SELECT COUNT(*) FROM extension_stores WHERE account_id = ? AND deleted = 0", []any{accountID}, &st.ExtensionStoreCount},
+		{"SELECT COUNT(*) FROM excluded_scanlators WHERE account_id = ? AND deleted = 0", []any{accountID}, &st.ExcludedScanlatorCount},
 		{"SELECT COUNT(*) FROM devices WHERE account_id = ? AND last_seen >= ?", []any{accountID, cutoff24h}, &st.DeviceCount},
 	}
 	for _, c := range counts {
@@ -539,4 +600,44 @@ func (s *Store) Status(ctx context.Context, accountID int64) (*Status, error) {
 		}
 	}
 	return st, nil
+}
+
+// max returns the larger of two int64s.
+func max(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+// earliestKnown returns the smaller of two epoch values, treating 0 as unknown
+// (a 0 never wins over a real value).
+func earliestKnown(a, b int64) int64 {
+	switch {
+	case a <= 0:
+		return b
+	case b <= 0:
+		return a
+	default:
+		if a < b {
+			return a
+		}
+		return b
+	}
+}
+
+// nullIfZero maps the wire's 0 ("unknown") to a SQL NULL.
+func nullIfZero(v int64) any {
+	if v == 0 {
+		return nil
+	}
+	return v
+}
+
+// nullBlob maps an empty blob to SQL NULL.
+func nullBlob(b []byte) any {
+	if len(b) == 0 {
+		return nil
+	}
+	return b
 }
