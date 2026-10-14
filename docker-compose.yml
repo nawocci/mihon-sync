@@ -12,6 +12,12 @@ services:
       # `docker compose exec mihon-sync /mihon-sync genkey` instead.
       # MIHON_SYNC_API_KEY: "mhk_change_me"
       MIHON_SYNC_RETENTION_DAYS: "30"
+      # Per-account entity cap; 0 disables. Defaults to 500000 when unset.
+      # MIHON_SYNC_MAX_ENTITIES: "500000"
+      # Expose Prometheus metrics at GET /metrics.
+      # MIHON_SYNC_METRICS: "false"
+      # debug, info (default), warn, error
+      # MIHON_SYNC_LOG_LEVEL: "info"
       # Public hosts: set to "invite" and mint one-time codes with
       # `docker compose exec mihon-sync /mihon-sync invite`.
       # MIHON_SYNC_REGISTRATION: "open"

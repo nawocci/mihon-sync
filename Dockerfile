@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM golang:1.26 AS build
+FROM golang:1.27 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
@@ -12,7 +12,8 @@ COPY --from=build /out/mihon-sync /mihon-sync
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 
 ENV MIHON_SYNC_ADDR=":8080" \
-    MIHON_SYNC_DB="/data/mihon-sync.db"
+    MIHON_SYNC_DB="/data/mihon-sync.db" \
+    MIHON_SYNC_LOG_LEVEL="info"
 VOLUME ["/data"]
 EXPOSE 8080
 

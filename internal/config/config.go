@@ -4,12 +4,16 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 )
 
 const (
 	defaultAddr          = ":8080"
 	defaultDBPath        = "./mihon-sync.db"
 	defaultRetentionDays = 30
+	// defaultMaxEntities bounds a single account so one runaway push cannot
+	// exhaust memory or disk. Zero disables the check.
+	defaultMaxEntities = 500_000
 )
 
 // Registration modes for POST /api/v1/auth/register.
@@ -36,15 +40,25 @@ type Config struct {
 	// Registration controls key generation via POST /api/v1/auth/register:
 	// "open" (default), "invite", or "closed".
 	Registration string
+	// MaxEntities caps the number of non-deleted entities a single account may
+	// hold. A push that would exceed it is rejected.
+	MaxEntities int
+	// MetricsEnabled exposes GET /metrics in Prometheus text format.
+	MetricsEnabled bool
+	// LogLevel is one of debug, info, warn, error.
+	LogLevel string
 }
 
 func FromEnv() Config {
 	return Config{
-		Addr:          envStr("MIHON_SYNC_ADDR", defaultAddr),
-		DBPath:        envStr("MIHON_SYNC_DB", defaultDBPath),
-		RetentionDays: envInt("MIHON_SYNC_RETENTION_DAYS", defaultRetentionDays),
-		BootstrapKey:  os.Getenv("MIHON_SYNC_API_KEY"),
-		Registration:  normalizeRegistration(os.Getenv("MIHON_SYNC_REGISTRATION"), os.Getenv("MIHON_SYNC_ALLOW_REGISTRATION")),
+		Addr:           envStr("MIHON_SYNC_ADDR", defaultAddr),
+		DBPath:         envStr("MIHON_SYNC_DB", defaultDBPath),
+		RetentionDays:  envInt("MIHON_SYNC_RETENTION_DAYS", defaultRetentionDays),
+		BootstrapKey:   os.Getenv("MIHON_SYNC_API_KEY"),
+		Registration:   normalizeRegistration(os.Getenv("MIHON_SYNC_REGISTRATION"), os.Getenv("MIHON_SYNC_ALLOW_REGISTRATION")),
+		MaxEntities:    envIntAllowZero("MIHON_SYNC_MAX_ENTITIES", defaultMaxEntities),
+		MetricsEnabled: envBool("MIHON_SYNC_METRICS", false),
+		LogLevel:       envStr("MIHON_SYNC_LOG_LEVEL", "info"),
 	}
 }
 
@@ -80,6 +94,16 @@ func envInt(key string, fallback int) int {
 	return fallback
 }
 
+// envIntAllowZero is like envInt but honours an explicit 0 (used to disable a cap).
+func envIntAllowZero(key string, fallback int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			return n
+		}
+	}
+	return fallback
+}
+
 func envBool(key string, fallback bool) bool {
 	if v := os.Getenv(key); v != "" {
 		if b, err := strconv.ParseBool(v); err == nil {
@@ -87,4 +111,13 @@ func envBool(key string, fallback bool) bool {
 		}
 	}
 	return fallback
+}
+
+// ValidLogLevel reports whether level is a recognised slog level name.
+func ValidLogLevel(level string) bool {
+	switch strings.ToLower(level) {
+	case "debug", "info", "warn", "error":
+		return true
+	}
+	return false
 }

@@ -1,16 +1,19 @@
-// mihon-sync is a self-hosted sync server for Mihon.
+// mihon-sync is a self-hosted sync server for Mihon-based apps and forks.
 //
 // Usage:
 //
-//	mihon-sync serve                    run the HTTP server
-//	mihon-sync genkey [-label NAME]     create an API key (shown once)
-//	mihon-sync revokekey KEY            delete an account and all its data
-//	mihon-sync listkeys                 list API key hashes and labels
-//	mihon-sync invite [-label NAME] [-ttl 15m]  mint one-time invite code
+//	mihon-sync serve                     run the HTTP server
+//	mihon-sync genkey [-label NAME]      create an API key (shown once)
+//	mihon-sync revokekey KEY             delete an account and all its data
+//	mihon-sync listkeys [-json]          list API key hashes and labels
+//	mihon-sync invite [-label NAME] [-ttl 15m]   mint a one-time invite code
+//	mihon-sync listinvites [-json]       list invite codes with their status
+//	mihon-sync revokeinvite ID           delete an unused invite code
 package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -19,6 +22,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -67,10 +71,10 @@ commands:
   serve                    run the HTTP server
   genkey [-label NAME]     create an API key (shown once)
   revokekey KEY            delete an account and all its synced data
-  listkeys                 list API key hashes and labels
-  invite [-label NAME] [-ttl 15m]   mint one-time invite code (shown once)
-  listinvites              list pending invite codes (hash prefix only)
-  revokeinvite ID          delete unused invite code by ID
+  listkeys [-json]         list API key hashes and labels
+  invite [-label NAME] [-ttl 15m]   mint a one-time invite code (shown once)
+  listinvites [-json]      list invite codes with their status
+  revokeinvite ID          delete an unused invite code by ID
 
 environment:
   MIHON_SYNC_ADDR                listen address (default ":8080")
@@ -78,7 +82,26 @@ environment:
   MIHON_SYNC_RETENTION_DAYS      tombstone retention in days (default 30)
   MIHON_SYNC_API_KEY             bootstrap API key, account created on serve start
   MIHON_SYNC_REGISTRATION        key generation mode: open (default), invite, closed
+  MIHON_SYNC_MAX_ENTITIES        per-account entity cap (default 500000, 0 disables)
+  MIHON_SYNC_METRICS             expose GET /metrics (default false)
+  MIHON_SYNC_LOG_LEVEL           debug, info (default), warn, error
 `)
+}
+
+// setupLogging configures the process-wide slog logger from the configured level.
+func setupLogging(level string) {
+	var l slog.Level
+	switch strings.ToLower(level) {
+	case "debug":
+		l = slog.LevelDebug
+	case "warn":
+		l = slog.LevelWarn
+	case "error":
+		l = slog.LevelError
+	default:
+		l = slog.LevelInfo
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: l})))
 }
 
 func cmdServe(args []string) error {
@@ -88,6 +111,8 @@ func cmdServe(args []string) error {
 	}
 
 	cfg := config.FromEnv()
+	setupLogging(cfg.LogLevel)
+
 	st, err := store.Open(cfg.DBPath)
 	if err != nil {
 		return err
@@ -132,7 +157,13 @@ func cmdServe(args []string) error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		slog.Info("listening", "addr", cfg.Addr, "db", cfg.DBPath)
+		slog.Info("listening",
+			"addr", cfg.Addr,
+			"db", cfg.DBPath,
+			"registration", cfg.Registration,
+			"metrics", cfg.MetricsEnabled,
+			"version", syncapi.Version,
+		)
 		errCh <- srv.ListenAndServe()
 	}()
 
@@ -156,6 +187,7 @@ func cmdServe(args []string) error {
 func cmdGenkey(args []string) error {
 	fs := flag.NewFlagSet("genkey", flag.ContinueOnError)
 	label := fs.String("label", "", "human-readable label for the key")
+	asJSON := fs.Bool("json", false, "print the result as JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -175,6 +207,9 @@ func cmdGenkey(args []string) error {
 		return err
 	}
 
+	if *asJSON {
+		return printJSON(map[string]string{"api_key": key, "label": *label})
+	}
 	fmt.Println("API key created. Store it somewhere safe — it is shown only once:")
 	fmt.Println()
 	fmt.Println("  " + key)
@@ -206,6 +241,7 @@ func cmdRevokekey(args []string) error {
 
 func cmdListkeys(args []string) error {
 	fs := flag.NewFlagSet("listkeys", flag.ContinueOnError)
+	asJSON := fs.Bool("json", false, "print the result as JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -221,6 +257,23 @@ func cmdListkeys(args []string) error {
 	if err != nil {
 		return err
 	}
+
+	if *asJSON {
+		type row struct {
+			ID        int64  `json:"id"`
+			KeyHash   string `json:"key_hash_prefix"`
+			CreatedAt int64  `json:"created_at"`
+			Label     string `json:"label"`
+		}
+		rows := make([]row, 0, len(accounts))
+		for _, a := range accounts {
+			rows = append(rows, row{
+				ID: a.ID, KeyHash: truncate(a.KeyHash, 16), CreatedAt: a.CreatedAt, Label: a.Label,
+			})
+		}
+		return printJSON(rows)
+	}
+
 	if len(accounts) == 0 {
 		fmt.Println("no API keys; create one with: mihon-sync genkey")
 		return nil
@@ -228,12 +281,8 @@ func cmdListkeys(args []string) error {
 
 	fmt.Printf("%-10s %-20s %-12s %s\n", "ID", "KEY HASH (PREFIX)", "CREATED", "LABEL")
 	for _, a := range accounts {
-		hashPrefix := a.KeyHash
-		if len(hashPrefix) > 16 {
-			hashPrefix = hashPrefix[:16]
-		}
 		fmt.Printf("%-10d %-20s %-12s %s\n",
-			a.ID, hashPrefix+"...", time.Unix(a.CreatedAt, 0).Format("2006-01-02"), a.Label)
+			a.ID, truncate(a.KeyHash, 16)+"...", time.Unix(a.CreatedAt, 0).Format("2006-01-02"), a.Label)
 	}
 	return nil
 }
@@ -245,6 +294,7 @@ func cmdInvite(args []string) error {
 	fs := flag.NewFlagSet("invite", flag.ContinueOnError)
 	label := fs.String("label", "", "human-readable label for the invite")
 	ttl := fs.Duration("ttl", defaultInviteTTL, "invite code lifetime, e.g. 15m (max 24h)")
+	asJSON := fs.Bool("json", false, "print the result as JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -263,10 +313,18 @@ func cmdInvite(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := st.CreateInviteToken(context.Background(), auth.HashKey(code), *label, time.Now().Add(*ttl).Unix()); err != nil {
+	expiresAt := time.Now().Add(*ttl).Unix()
+	if err := st.CreateInviteToken(context.Background(), auth.HashKey(code), *label, expiresAt); err != nil {
 		return err
 	}
 
+	if *asJSON {
+		return printJSON(map[string]any{
+			"invite_code": code,
+			"label":       *label,
+			"expires_at":  expiresAt,
+		})
+	}
 	fmt.Println("Invite code created. Share it within the window — it burns on first successful use:")
 	fmt.Println()
 	fmt.Println("  " + code)
@@ -276,6 +334,7 @@ func cmdInvite(args []string) error {
 
 func cmdListInvites(args []string) error {
 	fs := flag.NewFlagSet("listinvites", flag.ContinueOnError)
+	asJSON := fs.Bool("json", false, "print the result as JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -291,25 +350,46 @@ func cmdListInvites(args []string) error {
 	if err != nil {
 		return err
 	}
+
+	now := time.Now().Unix()
+	statusOf := func(t store.InviteToken) string {
+		switch {
+		case t.UsedAt.Valid:
+			return "used"
+		case t.ExpiresAt <= now:
+			return "expired"
+		default:
+			return "pending"
+		}
+	}
+
+	if *asJSON {
+		type row struct {
+			ID        int64  `json:"id"`
+			Status    string `json:"status"`
+			ExpiresAt int64  `json:"expires_at"`
+			CreatedAt int64  `json:"created_at"`
+			Label     string `json:"label"`
+		}
+		rows := make([]row, 0, len(tokens))
+		for _, t := range tokens {
+			rows = append(rows, row{
+				ID: t.ID, Status: statusOf(t), ExpiresAt: t.ExpiresAt,
+				CreatedAt: t.CreatedAt, Label: t.Label,
+			})
+		}
+		return printJSON(rows)
+	}
+
 	if len(tokens) == 0 {
 		fmt.Println("no invite codes; create one with: mihon-sync invite")
 		return nil
 	}
-	now := time.Now().Unix()
 	fmt.Printf("%-6s %-10s %-16s %-10s %s\n", "ID", "STATUS", "EXPIRES", "CREATED", "LABEL")
 	for _, t := range tokens {
-		status := "pending"
-		if t.UsedAt.Valid {
-			status = "used"
-		} else if t.ExpiresAt <= now {
-			status = "expired"
-		}
-		hashPrefix := t.TokenHash
-		if len(hashPrefix) > 8 {
-			hashPrefix = hashPrefix[:8]
-		}
 		fmt.Printf("%-6d %-10s %-16s %-10s %s (hash %s...)\n",
-			t.ID, status, time.Unix(t.ExpiresAt, 0).Format("01-02 15:04"), time.Unix(t.CreatedAt, 0).Format("2006-01-02"), t.Label, hashPrefix)
+			t.ID, statusOf(t), time.Unix(t.ExpiresAt, 0).Format("01-02 15:04"),
+			time.Unix(t.CreatedAt, 0).Format("2006-01-02"), t.Label, truncate(t.TokenHash, 8))
 	}
 	return nil
 }
@@ -339,4 +419,17 @@ func cmdRevokeInvite(args []string) error {
 	}
 	fmt.Println("invite code revoked")
 	return nil
+}
+
+func truncate(s string, n int) string {
+	if len(s) > n {
+		return s[:n]
+	}
+	return s
+}
+
+func printJSON(v any) error {
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(v)
 }

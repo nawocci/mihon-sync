@@ -83,16 +83,16 @@ func Authenticate(ctx context.Context, st *store.Store, r *http.Request) (int64,
 
 // Middleware wraps a handler, requiring a valid API key and injecting the
 // account id into the request context.
-func Middleware(st *store.Store, writeError func(http.ResponseWriter, int, string)) func(http.Handler) http.Handler {
+func Middleware(st *store.Store, writeError func(http.ResponseWriter, int, string, string)) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			id, err := Authenticate(r.Context(), st, r)
 			if errors.Is(err, ErrMissingKey) || errors.Is(err, ErrInvalidKey) {
-				writeError(w, http.StatusUnauthorized, err.Error())
+				writeError(w, http.StatusUnauthorized, "unauthorized", err.Error())
 				return
 			}
 			if err != nil {
-				writeError(w, http.StatusInternalServerError, "auth error")
+				writeError(w, http.StatusInternalServerError, "internal", "auth error")
 				return
 			}
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, id)))
