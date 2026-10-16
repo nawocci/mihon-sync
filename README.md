@@ -10,15 +10,21 @@ One API key is one library. All of a user's devices share the same key.
 ## Quick start
 
 ```sh
-docker compose up -d --build
+docker compose up -d          # builds locally
+# or track the published image instead of building:
+docker compose pull && docker compose up -d
 ```
+
+Every push to `main` builds and pushes a multi-arch image to
+`ghcr.io/nawocci/mihon-sync` (`latest` + `sha-…`); `v*` tags publish semver
+tags. All data lives in the `mihon-sync-data` volume.
 
 Open `http://<host>:8080` for the dashboard. From a browser on the same machine
 (or through a local reverse proxy), it offers to generate the first key. From
 anywhere else, keys come from invites:
 
 ```sh
-docker exec mihon-sync mihon-sync invite create
+docker exec mihon-sync mihon-sync invite create --data /data
 ```
 
 Redeem the printed `inv_...` code on the dashboard's "Have an invite?" form to
@@ -93,3 +99,8 @@ they persist indefinitely.
 - QR rendering on the dashboard (the app can still be paired by pasting).
 - Key rotation for leaked keys.
 - Tombstone compaction.
+
+## Legacy
+
+The previous server (revision-based sync with its own account system) is kept
+on the `legacy` branch.

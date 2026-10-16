@@ -1,14 +1,19 @@
+# syntax=docker/dockerfile:1
+
 # Build stage. The SQLite driver is pure Go, so no cgo is needed here or at runtime.
 FROM golang:1.25-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/mihon-sync .
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/mihon-sync .
 
 # Runtime stage.
 FROM alpine:3.21
-RUN adduser -D -H -u 1000 mihon
+# /data belongs to the service user, so fresh volumes come up writable.
+RUN adduser -D -H -u 1000 mihon && mkdir -p /data && chown mihon:mihon /data
 COPY --from=build /out/mihon-sync /usr/local/bin/mihon-sync
 USER mihon
 VOLUME /data
