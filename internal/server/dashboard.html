@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kioku Sync</title>
+<style>
+  :root { color-scheme: light dark; --accent: #6750a4; --muted: #777; --border: #8883; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.5 system-ui, sans-serif; display: flex; justify-content: center; }
+  main { width: min(560px, 100%); padding: 24px 16px 64px; }
+  h1 { font-size: 22px; margin: 0; }
+  h2 { font-size: 16px; margin: 0 0 8px; }
+  p { margin: 4px 0; }
+  .muted { color: var(--muted); font-size: 13px; }
+  .card { border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-top: 16px; }
+  .hidden { display: none !important; }
+  input { width: 100%; padding: 10px 12px; margin-top: 8px; border: 1px solid var(--border); border-radius: 8px; background: transparent; color: inherit; font: inherit; }
+  button { margin-top: 12px; padding: 10px 16px; border: 0; border-radius: 8px; background: var(--accent); color: #fff; font: inherit; cursor: pointer; }
+  button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+  dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 16px; margin: 12px 0; }
+  dt { color: var(--muted); }
+  dd { margin: 0; overflow-wrap: anywhere; }
+  code { background: #8881; padding: 2px 6px; border-radius: 6px; overflow-wrap: anywhere; }
+  .error { color: #b3261e; margin-top: 16px; }
+  .key { font-family: ui-monospace, monospace; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Kioku Sync</h1>
+  <p class="muted" id="subtitle">Self-hosted sync for your reading library.</p>
+
+  <section class="card" id="setup" hidden>
+    <h2>First key</h2>
+    <p class="muted">This server has no keys yet. Keys can only be created from a local network or through an invite.</p>
+  </section>
+
+  <section class="card" id="bootstrap" hidden>
+    <h2>Create a key</h2>
+    <p class="muted">Allowed for local connections only. Each key is one library.</p>
+    <input id="bootstrap-label" placeholder="label, e.g. naufal (optional)">
+    <button id="bootstrap-button">Generate key</button>
+  </section>
+
+  <section class="card" id="register">
+    <h2>Have an invite?</h2>
+    <p class="muted">Redeem it to get a key for a new, empty library.</p>
+    <input id="invite-code" placeholder="inv_...">
+    <input id="register-label" placeholder="label (optional)">
+    <button id="register-button">Create key</button>
+  </section>
+
+  <section class="card" id="login">
+    <h2>Open a library</h2>
+    <p class="muted">Paste an API key to see its status and pair new devices.</p>
+    <input id="login-key" placeholder="mhk_...">
+    <button id="login-button">Open</button>
+  </section>
+
+  <section class="card" id="account" hidden>
+    <h2 id="account-label"></h2>
+    <dl>
+      <dt>Created</dt><dd id="account-created"></dd>
+      <dt>Records</dt><dd id="account-records"></dd>
+    </dl>
+    <h2 style="margin-top:16px">Add a device</h2>
+    <p class="muted">Settings &rarr; Sync on the phone takes these two values, or scan the pairing screen.</p>
+    <dl>
+      <dt>Server</dt><dd><code id="pairing-url"></code></dd>
+      <dt>Key</dt><dd><code class="key" id="pairing-key"></code></dd>
+    </dl>
+    <button class="secondary" id="copy-button">Copy pairing details</button>
+    <button class="secondary" id="logout-button">Log out</button>
+  </section>
+
+  <p class="error hidden" id="error"></p>
+</main>
+<script>
+  const $ = (id) => document.getElementById(id);
+  let apiKey = localStorage.getItem("mihon-sync-key") || "";
+
+  function showError(message) {
+    $("error").textContent = message;
+    $("error").classList.remove("hidden");
+  }
+  function clearError() { $("error").classList.add("hidden"); }
+  function show(id, visible) { $(id).classList.toggle("hidden", !visible); }
+
+  async function json(url, options) {
+    const response = await fetch(url, options);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || `request failed with ${response.status}`);
+    return data;
+  }
+
+  async function loadStatus() {
+    const status = await json("/bootstrap/status");
+    $("subtitle").textContent = `Self-hosted sync, version ${status.version}.`;
+    show("bootstrap", status.available);
+    show("setup", status.available && status.libraries === 0);
+  }
+
+  async function refreshAccount() {
+    if (!apiKey) { show("login", true); show("account", false); return; }
+    try {
+      const info = await json("/v1/me", { headers: { Authorization: `Bearer ${apiKey}` } });
+      localStorage.setItem("mihon-sync-key", apiKey);
+      $("account-label").textContent = info.label;
+      $("account-created").textContent = new Date(info.createdAt).toDateString();
+      $("account-records").textContent = `${info.recordCount} live records`;
+      const path = location.pathname.replace(/\/+$/, "");
+      $("pairing-url").textContent = location.origin + path;
+      $("pairing-key").textContent = apiKey;
+      show("login", false);
+      show("account", true);
+      show("register", false);
+    } catch (e) {
+      localStorage.removeItem("mihon-sync-key");
+      apiKey = "";
+      show("login", true);
+      show("account", false);
+      show("register", true);
+      showError(e.message);
+    }
+  }
+
+  async function createKey(url, body) {
+    clearError();
+    try {
+      const created = await json(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      apiKey = created.apiKey;
+      await refreshAccount();
+    } catch (e) { showError(e.message); }
+  }
+
+  $("bootstrap-button").addEventListener("click", () =>
+    createKey("/bootstrap/key", { label: $("bootstrap-label").value }));
+  $("register-button").addEventListener("click", () =>
+    createKey("/v1/register", { inviteCode: $("invite-code").value, label: $("register-label").value }));
+  $("login-button").addEventListener("click", () => {
+    apiKey = $("login-key").value.trim();
+    refreshAccount();
+  });
+  $("logout-button").addEventListener("click", () => {
+    localStorage.removeItem("mihon-sync-key");
+    apiKey = "";
+    clearError();
+    refreshAccount();
+  });
+  $("copy-button").addEventListener("click", async () => {
+    await navigator.clipboard.writeText(`${$("pairing-url").textContent} ${apiKey}`);
+    $("copy-button").textContent = "Copied";
+    setTimeout(() => { $("copy-button").textContent = "Copy pairing details"; }, 1500);
+  });
+  $("login-key").value = apiKey;
+
+  loadStatus().then(refreshAccount).catch((e) => showError(e.message));
+</script>
+</body>
+</html>
