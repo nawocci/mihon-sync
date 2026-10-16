@@ -83,6 +83,21 @@ func TestHealth(t *testing.T) {
 	}
 }
 
+func TestDashboard(t *testing.T) {
+	env := newTestEnv(t)
+
+	rec := env.do(t, "GET", "/", "", nil, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("dashboard status = %d, want 200", rec.Code)
+	}
+	if contentType := rec.Header().Get("Content-Type"); !strings.Contains(contentType, "text/html") {
+		t.Fatalf("dashboard content type = %q", contentType)
+	}
+	if !strings.Contains(rec.Body.String(), `id="account"`) {
+		t.Fatalf("dashboard body looks wrong")
+	}
+}
+
 func TestBootstrapIsLocalOnly(t *testing.T) {
 	env := newTestEnv(t)
 

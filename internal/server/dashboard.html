@@ -14,7 +14,7 @@
   p { margin: 4px 0; }
   .muted { color: var(--muted); font-size: 13px; }
   .card { border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-top: 16px; }
-  .hidden { display: none !important; }
+  [hidden] { display: none !important; }
   input { width: 100%; padding: 10px 12px; margin-top: 8px; border: 1px solid var(--border); border-radius: 8px; background: transparent; color: inherit; font: inherit; }
   button { margin-top: 12px; padding: 10px 16px; border: 0; border-radius: 8px; background: var(--accent); color: #fff; font: inherit; cursor: pointer; }
   button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
@@ -74,7 +74,7 @@
     <button class="secondary" id="logout-button">Log out</button>
   </section>
 
-  <p class="error hidden" id="error"></p>
+  <p class="error" id="error" hidden></p>
 </main>
 <script>
   const $ = (id) => document.getElementById(id);
@@ -82,16 +82,30 @@
 
   function showError(message) {
     $("error").textContent = message;
-    $("error").classList.remove("hidden");
+    show("error", true);
   }
-  function clearError() { $("error").classList.add("hidden"); }
-  function show(id, visible) { $(id).classList.toggle("hidden", !visible); }
+  function clearError() { show("error", false); }
+  function show(id, visible) { $(id).toggleAttribute("hidden", !visible); }
 
   async function json(url, options) {
     const response = await fetch(url, options);
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || `request failed with ${response.status}`);
     return data;
+  }
+
+  async function copyText(text) {
+    if (navigator.clipboard) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+    // Plain HTTP on a LAN is not a secure context, so fall back to a selection copy.
+    const area = document.createElement("textarea");
+    area.value = text;
+    document.body.appendChild(area);
+    area.select();
+    document.execCommand("copy");
+    area.remove();
   }
 
   async function loadStatus() {
@@ -102,7 +116,7 @@
   }
 
   async function refreshAccount() {
-    if (!apiKey) { show("login", true); show("account", false); return; }
+    if (!apiKey) { show("login", true); show("account", false); show("register", true); return; }
     try {
       const info = await json("/v1/me", { headers: { Authorization: `Bearer ${apiKey}` } });
       localStorage.setItem("mihon-sync-key", apiKey);
@@ -153,7 +167,7 @@
     refreshAccount();
   });
   $("copy-button").addEventListener("click", async () => {
-    await navigator.clipboard.writeText(`${$("pairing-url").textContent} ${apiKey}`);
+    await copyText(`${$("pairing-url").textContent} ${apiKey}`);
     $("copy-button").textContent = "Copied";
     setTimeout(() => { $("copy-button").textContent = "Copy pairing details"; }, 1500);
   });
